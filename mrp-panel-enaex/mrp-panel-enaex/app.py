@@ -5335,7 +5335,7 @@ def pagina_cargar():
 | Excel | Transacción / origen | Layout / hoja | Cada cuánto | Al subirlo |
 |---|---|---|---|---|
 | **MB51** | MB51 | Layout **`/CALCDEMANDA`** ("MOV. PARA PRONOSTICO DE DEMANDA") | Semanal | **Reemplaza** |
-| **MB5B** | MB5B | Columnas: Material · Descripción del material · De fecha · A fecha · Stock inicial · Total ctd.entrada mcía. · Total cantidades salida · Stock de cierre · Unidad medida base · Stock especial · **Centro** | Mensual | **Se agrega** |
+| **MB5B** | MB5B | Layout **`/CESBI ANALISIS DEMANDA CENTRO POWER BI`** | Mensual | **Se agrega** |
 | **MRP semanal** | Planificacion_Simpl | Hoja `data` | Semanal | **Se agrega** (fecha en el nombre) |
 | **MM60** | MM60 | — | Mensual | **Reemplaza** |
 | **ME5A** | ME5A | — | Semanal | **Reemplaza** |
