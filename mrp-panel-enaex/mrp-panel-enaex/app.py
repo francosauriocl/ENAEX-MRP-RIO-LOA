@@ -331,6 +331,9 @@ def cargar_mb5b(ruta: str | Path | None = None, archivos=None) -> pd.DataFrame:
         "Total cantidades salida": ("Total cantidades salida", "Total cantidad salida",
                                     "Total salidas"),
         "Stock de cierre": ("Stock de cierre", "Stock cierre", "Stock final"),
+        # Nuevo: la columna Centro permite separar el stock por centro.
+        # Es opcional: los MB5B antiguos no la traen y la app sigue funcionando.
+        "Centro": ("Centro", "Ce.", "Centro."),
     }
 
     partes = []
@@ -345,6 +348,10 @@ def cargar_mb5b(ruta: str | Path | None = None, archivos=None) -> pd.DataFrame:
             raise KeyError(f"MB5B: falta la columna '{c}'. Columnas leidas: {list(df.columns)}")
 
     df["Material"] = _norm_codigo(df["Material"])
+    if "Centro" in df.columns:
+        df["Centro"] = df["Centro"].astype(str).str.strip()
+        # Celdas vacías o "nan" quedan como NaN, no como texto.
+        df.loc[df["Centro"].isin(["", "nan", "None", "NaN"]), "Centro"] = pd.NA
     for col in ("De fecha", "A fecha"):
         if col in df.columns:
             df[col] = _parse_fecha(df[col])
@@ -499,29 +506,91 @@ def demanda_real_mes(desagregada: pd.DataFrame, mb5b: pd.DataFrame) -> pd.DataFr
         dict(year=agrupado["Año"], month=agrupado["Mes"], day=1)
     )
 
-    # Unir stock de cierre desde MB5B por (Material, FechaMes = De fecha)
-    stock = _stock_mensual(mb5b)
-    agrupado = agrupado.merge(stock, on=["Material", "FechaMes"], how="left")
+    # Adjuntar el stock de cierre de MB5B. Funciona aunque solo ALGUNOS meses de
+    # MB5B traigan Centro: primero cruza por (Material, Centro, FechaMes) y lo que
+    # quede sin dato lo completa por (Material, FechaMes) — los meses antiguos, que
+    # no tienen Centro, aportan el stock a nivel de material.
+    agrupado = adjuntar_stock(agrupado, mb5b)
 
     return agrupado.sort_values(["Material", "Centro", "FechaMes"]).reset_index(drop=True)
 
 
+def stock_por_centro(mb5b: pd.DataFrame):
+    """
+    Stock de cierre por (Material, Centro, FechaMes), usando SOLO las filas de
+    MB5B que traen Centro. Devuelve None si ningún registro tiene Centro.
+    """
+    if "Centro" not in mb5b.columns:
+        return None
+    m = mb5b[mb5b["Centro"].notna()].copy()
+    if m.empty:
+        return None
+    m = m[["Material", "Centro", "De fecha", "Stock de cierre"]].copy()
+    m["Centro"] = m["Centro"].astype(str).str.strip()
+    m["FechaMes"] = m["De fecha"].dt.to_period("M").dt.to_timestamp()
+    return m.groupby(["Material", "Centro", "FechaMes"], as_index=False)["Stock de cierre"].last()
+
+
+def stock_por_material(mb5b: pd.DataFrame) -> pd.DataFrame:
+    """Stock de cierre por (Material, FechaMes), usando TODAS las filas de MB5B."""
+    m = mb5b[["Material", "De fecha", "Stock de cierre"]].copy()
+    m["FechaMes"] = m["De fecha"].dt.to_period("M").dt.to_timestamp()
+    return m.groupby(["Material", "FechaMes"], as_index=False)["Stock de cierre"].last()
+
+
+def adjuntar_stock(target: pd.DataFrame, mb5b: pd.DataFrame) -> pd.DataFrame:
+    """
+    Agrega la columna 'Stock de cierre' a `target` (que tiene Material, Centro,
+    FechaMes).
+
+    Estrategia en dos pasos, pensada para que funcione aunque solo algunos MB5B
+    traigan la columna Centro:
+      1) Cruce fino por (Material, Centro, FechaMes) — para los meses cuyo MB5B
+         sí trae Centro, cada centro toma su propio stock.
+      2) Respaldo por (Material, FechaMes) — para las filas que quedaron sin dato
+         (meses cuyo MB5B no trae Centro), se toma el stock a nivel de material.
+    """
+    target = target.copy()
+    if "Centro" in target.columns:
+        target["Centro"] = target["Centro"].astype(str).str.strip()
+
+    pc = stock_por_centro(mb5b)
+    if pc is not None and "Centro" in target.columns:
+        target = target.merge(pc, on=["Material", "Centro", "FechaMes"], how="left")
+    else:
+        target["Stock de cierre"] = pd.NA
+
+    # Respaldo a nivel de material para las filas sin match por centro
+    pm = stock_por_material(mb5b).rename(columns={"Stock de cierre": "_stock_mat"})
+    target = target.merge(pm, on=["Material", "FechaMes"], how="left")
+    target["Stock de cierre"] = target["Stock de cierre"].fillna(target["_stock_mat"])
+    return target.drop(columns=["_stock_mat"])
+
+
 def stock_mensual(mb5b: pd.DataFrame) -> pd.DataFrame:
     """
-    Prepara el stock de cierre por (Material, FechaMes) desde MB5B.
-    'De fecha' es el primer día del mes de la foto, así que lo normalizamos
-    al primer día del mes para que empalme con FechaMes.
+    Prepara el stock de cierre por mes desde MB5B, para adjuntarlo a la serie.
 
-    Se calcula a nivel de Material (MB5B es por material, sin centro) y luego
-    se adjunta a la serie por (Material, FechaMes) para TODOS los meses.
+    Devuelve una tabla que SIEMPRE cubre todos los meses, combinando dos niveles
+    de detalle según lo que traiga cada mes de MB5B:
+      · Meses cuyo MB5B trae Centro -> una fila por (Material, Centro, FechaMes).
+      · Meses cuyo MB5B NO trae Centro (formato antiguo) -> una fila por
+        (Material, FechaMes) con Centro vacío; sirve de respaldo a nivel material.
+    Así el gráfico y los cálculos no pierden el stock de los meses antiguos aunque
+    los nuevos ya vengan separados por centro.
     """
-    stock = mb5b[["Material", "De fecha", "Stock de cierre"]].copy()
-    stock["FechaMes"] = stock["De fecha"].dt.to_period("M").dt.to_timestamp()
-    stock = (
-        stock.groupby(["Material", "FechaMes"], as_index=False)["Stock de cierre"]
-        .last()
-    )
-    return stock
+    pc = stock_por_centro(mb5b)
+    pm = stock_por_material(mb5b)
+    if pc is None:
+        return pm  # ningún mes trae Centro -> stock por material (formato antiguo)
+    # Agregar filas a nivel material SOLO para los meses que el detalle por centro
+    # no cubre (los meses sin Centro en MB5B).
+    meses_con_centro = set(pc["FechaMes"].unique())
+    pm_faltantes = pm[~pm["FechaMes"].isin(meses_con_centro)].copy()
+    if not pm_faltantes.empty:
+        pm_faltantes["Centro"] = pd.NA
+        return pd.concat([pc, pm_faltantes], ignore_index=True)
+    return pc
 
 
 # Alias interno para retrocompatibilidad
@@ -573,9 +642,31 @@ def serie_completa(
     serie["Demanda Mensual"] = serie["Demanda Mensual"].fillna(0.0)
     serie["Entrada Mensual"] = serie["Entrada Mensual"].fillna(0.0)
 
-    # Adjuntar stock de cierre por (Material, FechaMes) en todos los meses
+    # Adjuntar stock de cierre en todos los meses. El stock puede venir por
+    # (Material, Centro, FechaMes) si MB5B trae Centro, o por (Material, FechaMes)
+    # si no. Para el caso MIXTO (algunos meses con Centro y otros sin), se cruza
+    # primero por centro y lo que quede sin dato se completa por material.
     if stock is not None:
-        serie = serie.merge(stock, on=["Material", "FechaMes"], how="left")
+        if "Centro" in stock.columns:
+            stock = stock.copy()
+            # Filas con centro real (para el cruce fino) y filas material (respaldo)
+            tiene_c = stock["Centro"].notna()
+            stock_c = stock[tiene_c].copy()
+            stock_c["Centro"] = stock_c["Centro"].astype(str).str.strip()
+            serie["Centro"] = serie["Centro"].astype(str).str.strip()
+            serie = serie.merge(stock_c, on=["Material", "Centro", "FechaMes"], how="left")
+            # Respaldo por (Material, FechaMes) para lo que quedó sin dato
+            # (meses cuyo MB5B no trae Centro). Usa TODO el stock disponible.
+            faltan = serie["Stock de cierre"].isna()
+            if faltan.any():
+                mat = (stock.groupby(["Material", "FechaMes"], as_index=False)
+                       ["Stock de cierre"].last()
+                       .rename(columns={"Stock de cierre": "_stock_mat"}))
+                serie = serie.merge(mat, on=["Material", "FechaMes"], how="left")
+                serie["Stock de cierre"] = serie["Stock de cierre"].fillna(serie["_stock_mat"])
+                serie = serie.drop(columns=["_stock_mat"])
+        else:
+            serie = serie.merge(stock, on=["Material", "FechaMes"], how="left")
     elif "Stock de cierre" in real_mes.columns:
         serie = serie.merge(
             real_mes[["Material", "Centro", "FechaMes", "Stock de cierre"]],
@@ -1253,17 +1344,6 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
         raise FileNotFoundError(f"No se encontró el MRP semanal en: {ruta}")
     hoja = "data"
 
-    partes = []
-    for a in archivos:
-        fila = _fila_encabezado_archivo(a, hoja)
-        df_a = pd.read_excel(a, sheet_name=hoja, header=fila)
-        fecha = _fecha_desde_nombre(a.name)
-        df_a["Fecha MRP"] = fecha
-        df_a["Semana"] = _etiqueta_semana(fecha)
-        df_a["Archivo MRP"] = a.name
-        partes.append(df_a)
-    df = pd.concat(partes, ignore_index=True)
-
     mapeo = {
         "Material": ("Material",),
         "Texto breve de material": ("Texto breve de material", "Texto breve"),
@@ -1283,9 +1363,40 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
         "Fecha de entrega": ("Fecha de entrega",),
         "Usuario": ("Usuario",),
         "Observación": ("Observación", "Observacion"),
+        # Nueva columna del Planificación SIMPL: comentario de compra y
+        # seguimiento. Va al final, junto a la Observación. Se aceptan varias
+        # variantes de nombre por si el encabezado cambia levemente.
+        "Comentario compra y seguimiento": (
+            "Comentario compra y seguimiento", "Comentario de compra y seguimiento",
+            "Comentario de compra y seguimiento ", "Comentarios de compra y seguimiento",
+            "Comentario compra seguimiento", "Comentario de compra",
+            "Comentario compra/seguimiento", "Comentario y seguimiento",
+            "Comentario Compra y Seguimiento", "Seguimiento compra",
+        ),
     }
-    df = _renombrar(df, mapeo)
-    df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
+
+    partes = []
+    for a in archivos:
+        fila = _fila_encabezado_archivo(a, hoja)
+        df_a = pd.read_excel(a, sheet_name=hoja, header=fila)
+        # Renombrar columnas de CADA archivo por separado, ANTES de concatenar.
+        # Así, si distintas semanas escriben el encabezado con grafías diferentes
+        # (o una semana antigua no trae la columna nueva), todas terminan con el
+        # MISMO nombre estándar y se combinan en una sola columna al concatenar.
+        df_a = _renombrar(df_a, mapeo)
+        fecha = _fecha_desde_nombre(a.name)
+        df_a["Fecha MRP"] = fecha
+        df_a["Semana"] = _etiqueta_semana(fecha)
+        df_a["Archivo MRP"] = a.name
+        partes.append(df_a)
+    df = pd.concat(partes, ignore_index=True)
+
+    # Garantizar que la columna de comentario SIEMPRE exista, aunque NINGÚN
+    # archivo la traiga (los MRP antiguos no la tienen). Así las tablas y la
+    # ficha del material nunca fallan al buscarla; simplemente queda vacía.
+    if "Comentario compra y seguimiento" not in df.columns:
+        df["Comentario compra y seguimiento"] = pd.NA
+
     df = df.dropna(subset=["Material"])
     df["Material"] = _norm_codigo(df["Material"])
     df["Centro"] = _norm_codigo(df.get("Centro"))
@@ -1328,6 +1439,14 @@ def cargar_mm60(ruta=None) -> pd.DataFrame:
     df["Centro"] = _norm_codigo(df.get("Centro"))
     if "Precio" in df.columns:
         df["Precio"] = _parse_numero(df["Precio"])
+    # Indicador ABC: se normaliza en el ORIGEN para que TODAS las vistas
+    # (control, parámetros, gráficos y filtros) lo vean igual. Los materiales
+    # sin clasificación (vacío, o algo que no sea A ni C) quedan como "B".
+    if "Indicador ABC" in df.columns:
+        abc = df["Indicador ABC"].fillna("").astype(str).str.strip().str.upper()
+        df["Indicador ABC"] = abc.where(abc.isin(["A", "C"]), "B")
+    else:
+        df["Indicador ABC"] = "B"
     cols = [c for c in ["Material", "Centro", "Indicador ABC", "Precio",
                         "Grupo de compras", "Tipo de material"] if c in df.columns]
     return df[cols].drop_duplicates(subset=["Material", "Centro"]).reset_index(drop=True)
@@ -2179,6 +2298,11 @@ def calcular_parametros(demanda_df: pd.DataFrame | None = None) -> pd.DataFrame:
     except Exception:
         base["ABC"] = np.nan
         base["Precio"] = np.nan
+
+    # Materiales sin registro en MM60 (o con ABC vacío) -> clase "B", igual que
+    # en el resto del panel. Así ninguna vista muestra ABC en blanco.
+    abc_norm = base["ABC"].fillna("").astype(str).str.strip().str.upper()
+    base["ABC"] = abc_norm.where(abc_norm.isin(["A", "C"]), "B")
 
     # Nacionalidad para el piso de lead time: se toma de la clasificación por OC
     # (si MM60 no la trae, se asume Nacional -> piso 60).
@@ -3727,10 +3851,15 @@ def pagina_mrp_e002():
         else:
             cols_p = [c for c in ["Material", "Texto breve de material", "Centro", "Area",
                                   "Criticidad texto", "Condicion Stock", "Stock",
-                                  "Estado gestión", "Observación", "Solped",
+                                  "Estado gestión", "Observación",
+                                  "Comentario compra y seguimiento", "Solped",
                                   "Días en solped", "Usuario"] if c in prio.columns]
             st.dataframe(prio[cols_p].sort_values(["Estado gestión", "Material"]),
-                         use_container_width=True, hide_index=True)
+                         use_container_width=True, hide_index=True,
+                         column_config={
+                             "Observación": "Comentario",
+                             "Comentario compra y seguimiento": "Comentario compra y seguimiento",
+                         })
             st.caption(f"{len(prio)} materiales requieren gestión inmediata.")
 
         st.markdown("---")
@@ -3751,9 +3880,14 @@ def pagina_mrp_e002():
             else:
                 cols_s = [c for c in ["Material", "Texto breve de material", "Solped",
                                       "Días en solped", "TAT Promedio", "Tiempo demanda (días)",
-                                      "Urgencia OC", "Condicion Stock", "Criticidad texto"]
+                                      "Urgencia OC", "Condicion Stock", "Criticidad texto",
+                                      "Comentario compra y seguimiento"]
                           if c in sol.columns]
                 sol = buscar_en_tabla(sol, "buscar_sol")
+                sol = buscar_en_tabla(
+                    sol, "buscar_sol_num",
+                    etiqueta="🔎 Buscar por N° de solped",
+                    cols=("Solped",), placeholder="Ej: 1002542940")
                 sol_v = sol[cols_s].copy()
                 # Ordenar por urgencia si la columna existe; si no, por días en solped
                 if "Urgencia OC" in sol_v.columns:
@@ -3790,9 +3924,14 @@ def pagina_mrp_e002():
                 cols_o = [c for c in ["Material", "Texto breve de material", "OC en Transito",
                                       "Nacionalidad", "Estado OC", "Días de OC", "Días atraso OC",
                                       "Stock", "Pronostico_Consolidado", "Tiempo demanda (días)",
-                                      "Resultado demanda", "Proveedor"]
+                                      "Resultado demanda", "Proveedor",
+                                      "Comentario compra y seguimiento"]
                           if c in oc.columns]
                 oc = buscar_en_tabla(oc, "buscar_oc")
+                oc = buscar_en_tabla(
+                    oc, "buscar_oc_num",
+                    etiqueta="🔎 Buscar por N° de OC",
+                    cols=("OC en Transito",), placeholder="Ej: 4502668886")
                 oc_v = oc[cols_o].copy()
                 if "Días atraso OC" in oc_v.columns:
                     oc_v = oc_v.sort_values("Días atraso OC", ascending=False)
@@ -4112,7 +4251,7 @@ COLS_CONTROL = [
     # 5) TAT
     "TAT Promedio", "TAT Min", "TAT Max", "Recurrencia",
     # 6) Comentario
-    "Observación",
+    "Observación", "Comentario compra y seguimiento",
 ]
 
 RENOMBRE_CONTROL = {
@@ -4135,6 +4274,7 @@ RENOMBRE_CONTROL = {
     "TAT Min": "TAT mín.",
     "TAT Max": "TAT máx.",
     "Observación": "Comentario",
+    "Comentario compra y seguimiento": "Comentario compra y seguimiento",
 }
 
 
@@ -4441,6 +4581,13 @@ def pagina_control():
             st.caption("(Sin comentario)")
         else:
             st.info(str(comentario))
+
+        coment_cs = info.get("Comentario compra y seguimiento")
+        st.markdown("**Comentario de compra y seguimiento**")
+        if pd.isna(coment_cs) or not str(coment_cs).strip():
+            st.caption("(Sin comentario de compra y seguimiento)")
+        else:
+            st.info(str(coment_cs))
 
         st.markdown("---")
 
@@ -5188,7 +5335,7 @@ def pagina_cargar():
 | Excel | Transacción / origen | Layout / hoja | Cada cuánto | Al subirlo |
 |---|---|---|---|---|
 | **MB51** | MB51 | Layout **`/CALCDEMANDA`** ("MOV. PARA PRONOSTICO DE DEMANDA") | Semanal | **Reemplaza** |
-| **MB5B** | MB5B | Columnas: Material · Descripción del material · De fecha · A fecha · Stock inicial · Total ctd.entrada mcía. · Total cantidades salida · Stock de cierre · Unidad medida base · Stock especial | Mensual | **Se agrega** |
+| **MB5B** | MB5B | Columnas: Material · Descripción del material · De fecha · A fecha · Stock inicial · Total ctd.entrada mcía. · Total cantidades salida · Stock de cierre · Unidad medida base · Stock especial · **Centro** | Mensual | **Se agrega** |
 | **MRP semanal** | Planificacion_Simpl | Hoja `data` | Semanal | **Se agrega** (fecha en el nombre) |
 | **MM60** | MM60 | — | Mensual | **Reemplaza** |
 | **ME5A** | ME5A | — | Semanal | **Reemplaza** |
