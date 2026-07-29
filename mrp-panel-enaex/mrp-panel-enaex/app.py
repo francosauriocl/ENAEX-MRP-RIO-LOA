@@ -5403,10 +5403,7 @@ def pagina_cargar():
         ("MB51 — movimientos (Demanda)", "MB51", CARPETA_MB51, True,
          "MB51 LAYOUT / CALCDEMANDA (movimientos para el pronóstico de demanda)."),
         ("MB5B — stock del mes (Demanda)", "MB5B", CARPETA_MB5B, False,
-         "MB5B LAYOUT. Armar SIEMPRE en este orden de columnas: Material · "
-         "Descripción del material · De fecha · A fecha · Stock inicial · "
-         "Total ctd.entrada mcía. · Total cantidades salida · Stock de cierre · "
-         "Unidad medida base · Stock especial · Centro."),
+         "MB5B LAYOUT / CESBI ANALISIS DEMANDA CENTRO POWER BI "),
         ("MRP semanal — Planificacion_Simpl", "MRP", CARPETA_MRP, False,
          "Se ingresa el Excel de Planificación SIMPL. Debe traer la fecha en el "
          "nombre (ej. Planificacion_Simpl_-_Prillex_08072026.xlsx)."),
