@@ -1807,6 +1807,27 @@ def _consolidar_sufijos(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _gestion_tat_label(accion) -> str:
+    """
+    Resume la 'Acción de compra' en una etiqueta corta para la tabla de
+    materiales críticos, comparando TAT vs tiempo hasta la demanda:
+      · "Gestionar ya"     -> el TAT es mayor que el tiempo hasta la demanda:
+                              aunque pidas hoy, podría no llegar a tiempo.
+      · "Gestionar pronto" -> quedan ≤20 días de holgura: hay que iniciar la
+                              solped ahora para cumplir el plazo.
+      · "Hay tiempo"       -> hay holgura de sobra: se puede esperar sin riesgo
+                              (dejando 20 días de margen).
+    """
+    a = str(accion or "")
+    if a.startswith("Pedir ya"):
+        return "🔴 Gestionar ya"
+    if a.startswith("Gestionar solicitud"):
+        return "🟠 Gestionar pronto"
+    if a.startswith("Pedir en"):
+        return "🟢 Hay tiempo"
+    return "—"
+
+
 def _accion_tat(dias_hasta_demanda, tat_promedio, resultado, margen=20):
     """
     Decide qué hacer con un material comparando el tiempo hasta la próxima
@@ -3781,23 +3802,39 @@ def pagina_mrp_e002():
     total = len(datos)
     sin_stock = int((datos["Condicion Stock"] == "Quiebre Stock").sum())
     dispo = round(100 * (total - sin_stock) / total, 1) if total else 0
+    # Disponibilidad conservadora: cuentan como disponibles SOLO los materiales en
+    # "Stock OK" o "Sobre Stock" (Bajo Stock no se considera disponible).
+    dispo_cons = round(
+        100 * datos["Condicion Stock"].isin(["Stock OK", "Sobre Stock"]).mean(), 1
+    ) if total else 0
     atrasadas = int((datos["Estado OC"] == "Atrasada").sum())
     bloq = int((datos["Estado gestión"] == "Solped bloqueada").sum())
     valid = int((datos["Estado gestión"] == "Validación").sum())
 
-    k = st.columns(7)
+    prev_cons = None
+    if prev is not None:
+        for _c in ("Disponibilidad conservadora", "disponibilidad_conservadora"):
+            if _c in prev.index:
+                prev_cons = prev[_c]
+                break
+
+    k = st.columns(8)
     k[0].metric("Materiales", f"{total:,}".replace(",", "."))
     k[1].metric("Disponibilidad", f"{dispo} %",
                 delta=_delta(dispo, prev["Disponibilidad"] if prev is not None else None))
-    k[2].metric("Sin stock", sin_stock,
+    k[2].metric("Disponibilidad conservadora", f"{dispo_cons} %",
+                delta=_delta(dispo_cons, prev_cons),
+                help="Solo cuentan como disponibles los materiales en Stock OK o "
+                     "Sobre Stock (Bajo Stock no se considera disponible)")
+    k[3].metric("Sin stock", sin_stock,
                 delta=_delta(sin_stock, prev["Sin stock"] if prev is not None else None),
                 delta_color="inverse")
-    k[3].metric("OC atrasadas", atrasadas)
-    k[4].metric("OC en curso", int((datos["Estado OC"] == "En curso").sum()))
-    k[5].metric("Solped bloqueadas", bloq,
+    k[4].metric("OC atrasadas", atrasadas)
+    k[5].metric("OC en curso", int((datos["Estado OC"] == "En curso").sum()))
+    k[6].metric("Solped bloqueadas", bloq,
                 delta=_delta(bloq, prev["Solped bloqueada"] if prev is not None else None),
                 delta_color="inverse")
-    k[6].metric("En validación", valid,
+    k[7].metric("En validación", valid,
                 delta=_delta(valid, prev["Validación"] if prev is not None else None),
                 delta_color="inverse")
 
@@ -3921,7 +3958,8 @@ def pagina_mrp_e002():
             if oc.empty:
                 st.info("No hay OC en tránsito.")
             else:
-                cols_o = [c for c in ["Material", "Texto breve de material", "OC en Transito",
+                cols_o = [c for c in ["Material", "Texto breve de material", "Criticidad texto",
+                                      "OC en Transito",
                                       "Nacionalidad", "Estado OC", "Días de OC", "Días atraso OC",
                                       "Stock", "Pronostico_Consolidado", "Tiempo demanda (días)",
                                       "Resultado demanda", "Proveedor",
@@ -3937,6 +3975,7 @@ def pagina_mrp_e002():
                     oc_v = oc_v.sort_values("Días atraso OC", ascending=False)
                 st.dataframe(oc_v.rename(columns={
                     "Texto breve de material": "Descripción",
+                    "Criticidad texto": "Criticidad",
                     "Pronostico_Consolidado": "Demanda proyectada",
                     "Resultado demanda": "¿Cumple demanda?"}),
                     use_container_width=True, hide_index=True)
@@ -4278,11 +4317,11 @@ RENOMBRE_CONTROL = {
 }
 
 
-def agregar_proveedores_a_tabla(df, col_material="Material", top=5):
+def agregar_proveedores_a_tabla(df, col_material="Material", top=5, incluir_tat=True):
     """
     Agrega al final de cada fila hasta `top` proveedores sugeridos del historial,
-    ordenados de mejor a peor por TAT. Por cada proveedor añade 3 columnas:
-    nombre, TAT con el material y OTIF del proveedor.
+    ordenados de mejor a peor por TAT. Por cada proveedor añade el nombre y el
+    OTIF del proveedor, y (si `incluir_tat`) también el TAT con el material.
 
     Devuelve el DataFrame con las columnas nuevas. Si no hay historial, agrega
     las columnas vacías para no romper la tabla.
@@ -4296,7 +4335,8 @@ def agregar_proveedores_a_tabla(df, col_material="Material", top=5):
     nuevas = {}
     for i in range(1, top + 1):
         nuevas[f"Prov {i}"] = []
-        nuevas[f"TAT prov {i}"] = []
+        if incluir_tat:
+            nuevas[f"TAT prov {i}"] = []
         nuevas[f"OTIF prov {i} %"] = []
 
     for mat in df[col_material].astype(str):
@@ -4307,13 +4347,15 @@ def agregar_proveedores_a_tabla(df, col_material="Material", top=5):
                 nom = str(fila.get("Proveedor_Nombre", "") or "")
                 cod = str(fila.get("Proveedor_Codigo", "") or "")
                 nuevas[f"Prov {i}"].append(f"{nom} ({cod})" if nom else "")
-                tat = fila.get("TAT_Material")
-                nuevas[f"TAT prov {i}"].append("" if pd.isna(tat) else round(float(tat), 1))
+                if incluir_tat:
+                    tat = fila.get("TAT_Material")
+                    nuevas[f"TAT prov {i}"].append("" if pd.isna(tat) else round(float(tat), 1))
                 otif = fila.get("OTIF_Proveedor")
                 nuevas[f"OTIF prov {i} %"].append("" if pd.isna(otif) else round(float(otif), 1))
             else:
                 nuevas[f"Prov {i}"].append("")
-                nuevas[f"TAT prov {i}"].append("")
+                if incluir_tat:
+                    nuevas[f"TAT prov {i}"].append("")
                 nuevas[f"OTIF prov {i} %"].append("")
 
     out = df.copy()
@@ -4419,17 +4461,32 @@ def pagina_control():
     if criticos.empty:
         st.success("Todos los materiales con pronóstico cubren su próxima demanda.")
     else:
-        cols = [c for c in COLS_CONTROL if c in criticos.columns]
-        vista_c = criticos[cols].rename(columns=RENOMBRE_CONTROL)
+        criticos = criticos.copy()
+        # Columna nueva: qué tan urgente es gestionar, según TAT vs tiempo a la demanda.
+        # Va justo al lado de "Gestión".
+        if "Acción de compra" in criticos.columns:
+            criticos["Gestionar según TAT"] = criticos["Acción de compra"].map(_gestion_tat_label)
+
+        # Columnas de la tabla de críticos: se quitan Área, TAT mín. y TAT máx.,
+        # y se inserta la columna nueva justo después de "Estado gestión".
+        cols_crit = [c for c in COLS_CONTROL if c not in ("Area", "TAT Min", "TAT Max")]
+        if "Estado gestión" in cols_crit and "Gestionar según TAT" in criticos.columns:
+            cols_crit.insert(cols_crit.index("Estado gestión") + 1, "Gestionar según TAT")
+
+        cols = [c for c in cols_crit if c in criticos.columns]
+        renombre_c = dict(RENOMBRE_CONTROL)
+        renombre_c["Gestionar según TAT"] = "¿Cuándo gestionar? (TAT)"
+        vista_c = criticos[cols].rename(columns=renombre_c)
         orden_urg = {"No cumple": 0, "Urgente": 1, "Alerta": 2}
         vista_c = vista_c.assign(_o=criticos["Resultado demanda"].map(orden_urg).values) \
                          .sort_values(["_o", "Descripción"]).drop(columns="_o")
-        # Añadir 5 proveedores sugeridos al final de cada fila (nombre, TAT, OTIF).
-        # Solo tiene sentido para los que aún no tienen OC/solped en curso.
-        vista_c = agregar_proveedores_a_tabla(vista_c, "Material", top=5)
+        # Añadir 5 proveedores sugeridos al final de cada fila (nombre y OTIF; sin
+        # el TAT por proveedor, según lo pedido). Solo tiene sentido para los que
+        # aún no tienen OC/solped en curso.
+        vista_c = agregar_proveedores_a_tabla(vista_c, "Material", top=5, incluir_tat=False)
         st.caption("Al final de cada fila se proponen hasta **5 proveedores** del "
-                   "historial (nombre, TAT con el material y OTIF), de mejor a peor "
-                   "por TAT. Desplázate a la derecha para verlos.")
+                   "historial (nombre y OTIF), de mejor a peor por TAT. "
+                   "Desplázate a la derecha para verlos.")
         vista_c = buscar_en_tabla(vista_c, "buscar_ctl_crit")
         st.dataframe(vista_c, use_container_width=True, hide_index=True)
         st.download_button("⬇️  Descargar materiales críticos (CSV)",
@@ -5043,7 +5100,15 @@ def pagina_proveedores():
         if not prov.empty else []
     with st.sidebar:
         st.markdown("### Filtros")
-        sel_anio = st.selectbox("Año", ["Todos"] + [str(a) for a in anios], key="prov_anio_f")
+        # Multiselect de años: los gráficos de gasto (top 15, KPIs) y las tablas
+        # se calculan solo con los años elegidos. Por defecto, todos.
+        anios_txt = [str(a) for a in anios]
+        sel_anios = st.multiselect("Años", anios_txt, default=anios_txt,
+                                   key="prov_anio_f")
+        # Si no se elige ninguno, se consideran todos (evita gráficos vacíos).
+        anios_activos = sel_anios if sel_anios else anios_txt
+        anios_sel = {int(a) for a in anios_activos}
+        todos_los_anios = set(anios_sel) == set(anios)
         # Filtro de contrato marco (aplica a proveedores y materiales)
         f_contrato = st.multiselect("Contrato marco", ["Sí", "No"], default=["Sí", "No"],
                                     key="prov_cm_f")
@@ -5066,21 +5131,37 @@ def pagina_proveedores():
     if prov.empty:
         st.info("Sin proveedores que coincidan con los filtros.")
     else:
+        # Gasto CLP considerando SOLO los años elegidos en el filtro. Si están
+        # todos, equivale al "CLP total". Se usa para KPIs y el top 15.
+        cols_clp_sel = [c for c in prov.columns
+                        if c.startswith("CLP ") and c.split()[-1].isdigit()
+                        and int(c.split()[-1]) in anios_sel]
+        if cols_clp_sel:
+            prov = prov.copy()
+            prov["CLP años sel"] = prov[cols_clp_sel].sum(axis=1)
+            col_gasto = "CLP años sel"
+        else:
+            col_gasto = "CLP total" if "CLP total" in prov.columns else None
+
+        etiqueta_anios = "todos los años" if todos_los_anios else \
+            ("año " + ", ".join(str(a) for a in sorted(anios_sel)))
+
         k = st.columns(4)
         k[0].metric("Proveedores", len(prov))
-        if "CLP total" in prov.columns:
-            k[1].metric("Gasto total CLP", _fmt_clp(prov["CLP total"].sum()))
+        if col_gasto and col_gasto in prov.columns:
+            k[1].metric("Gasto CLP (años sel.)", _fmt_clp(prov[col_gasto].sum()),
+                        help=f"Suma del gasto en CLP de {etiqueta_anios}.")
         if "OTIF" in prov.columns and prov["OTIF"].notna().any():
             k[2].metric("OTIF promedio", f"{prov['OTIF'].mean():.1f}%")
         k[3].metric("Con contrato marco", int((prov["Contrato marco"] == "Sí").sum()))
 
-        if "CLP total" in prov.columns:
-            top = prov.nlargest(15, "CLP total")
+        if col_gasto and col_gasto in prov.columns:
+            top = prov.nlargest(15, col_gasto)
             fig = go.Figure(go.Bar(
-                y=top["Proveedor_Nombre"], x=top["CLP total"], orientation="h",
+                y=top["Proveedor_Nombre"], x=top[col_gasto], orientation="h",
                 marker_color="#2E86DE",
-                text=[_fmt_clp(v) for v in top["CLP total"]], textposition="outside"))
-            fig.update_layout(title="Top 15 proveedores por gasto total (CLP)",
+                text=[_fmt_clp(v) for v in top[col_gasto]], textposition="outside"))
+            fig.update_layout(title=f"Top 15 proveedores por gasto CLP ({etiqueta_anios})",
                               height=430, margin=dict(l=10, r=10, t=45, b=10),
                               plot_bgcolor="#fff", paper_bgcolor="#fff",
                               yaxis=dict(autorange="reversed"))
@@ -5106,9 +5187,11 @@ def pagina_proveedores():
         st.markdown("---")
         st.markdown("#### 📈 Histórico de gasto en proveedores")
 
+        # Solo las columnas CLP de los años elegidos en el filtro
         cols_clp_anio = sorted(
             [c for c in prov.columns
-             if c.startswith("CLP ") and c.split()[-1].isdigit()],
+             if c.startswith("CLP ") and c.split()[-1].isdigit()
+             and int(c.split()[-1]) in anios_sel],
             key=lambda c: int(c.split()[-1]))
         anios_clp = [int(c.split()[-1]) for c in cols_clp_anio]
 
@@ -5116,8 +5199,9 @@ def pagina_proveedores():
             st.info("No hay gasto en CLP por año para graficar el histórico.")
         else:
             # --- Evolución del gasto: top proveedores + resto ---
-            top_n = prov.nlargest(10, "CLP total") if "CLP total" in prov.columns \
-                else prov.head(10)
+            # El ranking (top 10) se hace por el gasto de los años elegidos.
+            orden_col = col_gasto if (col_gasto and col_gasto in prov.columns) else None
+            top_n = prov.nlargest(10, orden_col) if orden_col else prov.head(10)
             resto = prov[~prov.index.isin(top_n.index)]
 
             fig = go.Figure()
@@ -5136,7 +5220,7 @@ def pagina_proveedores():
                     hovertemplate="Otros<br>%{x}: %{y:,.0f} CLP<extra></extra>"))
             fig.update_layout(
                 barmode="stack",
-                title="Gasto por año (CLP) — top 10 proveedores y resto",
+                title=f"Gasto por año (CLP) — top 10 proveedores y resto ({etiqueta_anios})",
                 height=460, margin=dict(l=10, r=10, t=45, b=10),
                 plot_bgcolor="#fff", paper_bgcolor="#fff",
                 xaxis=dict(title="Año", type="category"),
@@ -5232,8 +5316,8 @@ def pagina_proveedores():
         gasto_cols = [c for c in prov.columns
                       if any(c.startswith(f"{mon} ") for mon in ("CLP", "USD", "EUR", "UF", "GBP"))
                       and c.split()[-1].isdigit()]
-        if sel_anio != "Todos":
-            gasto_cols = [c for c in gasto_cols if c.endswith(sel_anio)]
+        if not todos_los_anios:
+            gasto_cols = [c for c in gasto_cols if int(c.split()[-1]) in anios_sel]
         gasto_cols = sorted(gasto_cols, key=lambda c: (c.split()[-1], c.split()[0]))
         total_cols = [c for c in prov.columns if c.endswith("total")]
         cols = [c for c in base_cols if c in prov.columns] + total_cols + gasto_cols
@@ -5261,8 +5345,8 @@ def pagina_proveedores():
         st.info("Sin datos de compras por material.")
     else:
         datos_m = mat.copy()
-        if sel_anio != "Todos":
-            datos_m = datos_m[datos_m["Año"] == int(sel_anio)]
+        if not todos_los_anios and "Año" in datos_m.columns:
+            datos_m = datos_m[datos_m["Año"].isin(anios_sel)]
         # filtro de contrato marco
         if f_contrato and "Contrato marco" in datos_m.columns:
             datos_m = datos_m[datos_m["Contrato marco"].isin(f_contrato)]
