@@ -31,7 +31,7 @@ import streamlit as st
 
 # Sello de versión del código. Cambia cada vez que se entrega una versión nueva.
 # Se muestra en la barra lateral para poder confirmar qué versión está desplegada.
-APP_VERSION = "2026-07-30c · criticidad B (fix caché)"
+#APP_VERSION = "2026-07-30c · criticidad B (fix caché)"
 
 # ==========================================================================
 # CONFIGURACIÓN DE LA PÁGINA  (debe ir antes que cualquier otro st.*)
