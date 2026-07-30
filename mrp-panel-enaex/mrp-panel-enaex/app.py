@@ -29,6 +29,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+# Sello de versión del código. Cambia cada vez que se entrega una versión nueva.
+# Se muestra en la barra lateral para poder confirmar qué versión está desplegada.
+APP_VERSION = "2026-07-30c · criticidad B (fix caché)"
+
 # ==========================================================================
 # CONFIGURACIÓN DE LA PÁGINA  (debe ir antes que cualquier otro st.*)
 # ==========================================================================
@@ -1410,7 +1414,13 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
     if "Fecha de entrega" in df.columns:
         df["Fecha de entrega"] = _parse_fecha(df["Fecha de entrega"])
     if "Criticidad" in df.columns:
-        df["Criticidad"] = df["Criticidad"].fillna("").astype(str).str.strip()
+        crit = df["Criticidad"].fillna("").astype(str).str.strip().str.upper()
+        # Vacío o cualquier valor que no sea A ni C -> "B" (clase Media).
+        # Así ningún material queda "Sin criticidad" y la clase B aparece en
+        # todas las tablas, filtros y gráficos (incluido el histórico A/B/C).
+        df["Criticidad"] = crit.where(crit.isin(["A", "C"]), "B")
+    else:
+        df["Criticidad"] = "B"
     # Dedupe DENTRO de cada semana (no entre semanas: el histórico se conserva)
     df = df.drop_duplicates(subset=["Material", "Centro", "Semana"], keep="last")
     return df.sort_values(["Fecha MRP", "Material"]).reset_index(drop=True)
@@ -1717,9 +1727,10 @@ def _criticidad_texto(c) -> str:
         return "Alta"
     if c == "C":
         return "Baja"
-    if c == "B":
-        return "Media"
-    return "Sin criticidad"
+    # "B", vacío o cualquier otro valor -> "Media".
+    # Los materiales sin clasificación de criticidad se consideran clase B (Media),
+    # de modo que no quede ninguno como "Sin criticidad".
+    return "Media"
 
 
 def _rango_dias_solped(d):
@@ -3822,12 +3833,12 @@ def pagina_mrp_e002():
         with r2:
             if "Criticidad texto" in datos.columns:
                 conteo = {c: int((datos["Criticidad texto"] == c).sum())
-                          for c in ["Alta", "Media", "Baja", "Sin criticidad"]}
+                          for c in ["Alta", "Media", "Baja"]}
                 conteo = {a: b for a, b in conteo.items() if b}
                 st.plotly_chart(barras(conteo,
                                        {"Alta": "#E74C3C", "Media": "#F39C12",
-                                        "Baja": "#F1C40F", "Sin criticidad": "#BDC3C7"},
-                                       "Material por criticidad", True),
+                                        "Baja": "#F1C40F"},
+                                       "Material por criticidad (Media = clase B)", True),
                                 use_container_width=True)
         with r3:
             # OC por condición de stock (dónde están las OC)
@@ -4063,11 +4074,14 @@ def pagina_mrp_e002():
                             x=hist["Semana"], y=hist[c], name=c, mode="lines+markers",
                             line=dict(width=2.5, color=colores.get(c)),
                             marker=dict(size=7)))
-                fig.update_layout(title=titulo, height=330,
-                                  margin=dict(l=10, r=10, t=45, b=10),
+                fig.update_layout(title=dict(text=titulo, x=0, xanchor="left"),
+                                  height=370,
+                                  margin=dict(l=10, r=10, t=50, b=80),
                                   plot_bgcolor="#fff", paper_bgcolor="#fff",
                                   hovermode="x unified",
-                                  legend=dict(orientation="h", y=1.02, yanchor="bottom"),
+                                  legend=dict(orientation="h", y=-0.30,
+                                              yanchor="top", x=0,
+                                              font=dict(size=11)),
                                   xaxis=dict(title="", showgrid=False),
                                   yaxis=dict(title=eje, showgrid=True, gridcolor="#EEF1F4"))
                 return fig
@@ -5335,7 +5349,7 @@ def pagina_cargar():
 | Excel | Transacción / origen | Layout / hoja | Cada cuánto | Al subirlo |
 |---|---|---|---|---|
 | **MB51** | MB51 | Layout **`/CALCDEMANDA`** ("MOV. PARA PRONOSTICO DE DEMANDA") | Semanal | **Reemplaza** |
-| **MB5B** | MB5B | Layout **`/CESBI ANALISIS DEMANDA CENTRO POWER BI`** | Mensual | **Se agrega** |
+| **MB5B** | MB5B | Columnas: Material · Descripción del material · De fecha · A fecha · Stock inicial · Total ctd.entrada mcía. · Total cantidades salida · Stock de cierre · Unidad medida base · Stock especial · **Centro** | Mensual | **Se agrega** |
 | **MRP semanal** | Planificacion_Simpl | Hoja `data` | Semanal | **Se agrega** (fecha en el nombre) |
 | **MM60** | MM60 | — | Mensual | **Reemplaza** |
 | **ME5A** | ME5A | — | Semanal | **Reemplaza** |
@@ -5388,10 +5402,14 @@ def pagina_cargar():
 
     autorizado = True
     if gh_password_configurada():
-        clave = st.text_input("🔒 Contraseña para cargar archivos", type="password")
-        autorizado = gh_password_ok(clave)
-        if not autorizado:
-            st.caption("Ingresa la contraseña para habilitar la carga.")
+        if tiene_acceso_total():
+            # Ya ingresó la clave al entrar al panel; no la pedimos otra vez.
+            autorizado = True
+        else:
+            clave = st.text_input("🔒 Contraseña para cargar archivos", type="password")
+            autorizado = gh_password_ok(clave)
+            if not autorizado:
+                st.caption("Ingresa la contraseña para habilitar la carga.")
     else:
         st.caption("⚠️ No hay contraseña configurada (`APP_PASSWORD` en los secrets).")
 
@@ -5403,7 +5421,10 @@ def pagina_cargar():
         ("MB51 — movimientos (Demanda)", "MB51", CARPETA_MB51, True,
          "MB51 LAYOUT / CALCDEMANDA (movimientos para el pronóstico de demanda)."),
         ("MB5B — stock del mes (Demanda)", "MB5B", CARPETA_MB5B, False,
-         "MB5B LAYOUT / CESBI ANALISIS DEMANDA CENTRO POWER BI "),
+         "MB5B LAYOUT. Armar SIEMPRE en este orden de columnas: Material · "
+         "Descripción del material · De fecha · A fecha · Stock inicial · "
+         "Total ctd.entrada mcía. · Total cantidades salida · Stock de cierre · "
+         "Unidad medida base · Stock especial · Centro."),
         ("MRP semanal — Planificacion_Simpl", "MRP", CARPETA_MRP, False,
          "Se ingresa el Excel de Planificación SIMPL. Debe traer la fecha en el "
          "nombre (ej. Planificacion_Simpl_-_Prillex_08072026.xlsx)."),
@@ -5560,13 +5581,81 @@ PAGINAS = {
 }
 
 
+# Páginas de ACCESO LIBRE (no piden contraseña). El resto exige la clave.
+PAGINAS_LIBRES = {"🚚  MRP E002", "💰  Costos"}
+
+
+def tiene_acceso_total() -> bool:
+    """
+    True si el usuario ya ingresó la contraseña en esta sesión.
+    Si no hay contraseña configurada (APP_PASSWORD), no se puede bloquear, así
+    que se permite todo (para no dejar la app inutilizable).
+    """
+    if not gh_password_configurada():
+        return True
+    return bool(st.session_state.get("acceso_total", False))
+
+
+def _sidebar_acceso():
+    """Muestra en la barra lateral el estado de acceso y el botón de salir."""
+    if not gh_password_configurada():
+        return
+    if tiene_acceso_total():
+        st.caption("🔓 Acceso completo habilitado")
+        if st.button("Cerrar sesión", use_container_width=True):
+            st.session_state["acceso_total"] = False
+            st.rerun()
+    else:
+        st.caption("🔒 Acceso libre: **MRP E002** y **Costos**")
+        st.caption("El resto pide contraseña.")
+
+
+def _portal_clave(pagina: str):
+    """Pantalla que pide la contraseña para las visualizaciones protegidas."""
+    st.markdown(
+        '<div class="hdr hdr-azul"><h1>🔒 Acceso restringido</h1>'
+        '<p>Esta visualización requiere contraseña</p></div>',
+        unsafe_allow_html=True,
+    )
+    st.info(f"La visualización **{pagina}** requiere contraseña.\n\n"
+            "Las páginas **🚚 MRP E002** y **💰 Costos** son de acceso libre; "
+            "puedes ir a ellas desde el menú de la izquierda sin clave.")
+    clave = st.text_input("Contraseña", type="password", key="clave_acceso")
+    if clave:
+        if gh_password_ok(clave):
+            st.session_state["acceso_total"] = True
+            st.rerun()
+        else:
+            st.error("Contraseña incorrecta. Inténtalo de nuevo.")
+    st.caption("Ingresa la contraseña para desbloquear el resto de las "
+               "visualizaciones durante esta sesión.")
+
+
 def main():
+    # Si el código cambió de versión, limpiar la caché UNA vez. Esto evita el
+    # problema de que Streamlit siga sirviendo resultados calculados con la
+    # versión anterior (las funciones cacheadas no se invalidan solas cuando
+    # cambia una función interna que ellas llaman, como el cálculo de criticidad).
+    if st.session_state.get("_app_version") != APP_VERSION:
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        st.session_state["_app_version"] = APP_VERSION
+
     with st.sidebar:
         st.markdown("### 📦 Panel MRP · Enaex")
+        st.caption(f"🧩 Versión **{APP_VERSION}**")
         eleccion = st.radio(
             "Ir a:", list(PAGINAS.keys()), label_visibility="collapsed"
         )
         st.markdown("---")
+        _sidebar_acceso()
+
+    # Control de acceso: las páginas que no son de acceso libre exigen la clave.
+    if eleccion not in PAGINAS_LIBRES and not tiene_acceso_total():
+        _portal_clave(eleccion)
+        return
 
     try:
         PAGINAS[eleccion]()
