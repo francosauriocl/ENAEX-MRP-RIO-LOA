@@ -5474,13 +5474,10 @@ def pagina_cargar():
                 "(se pierden al reiniciar). Para que queden permanentes, configura los "
                 "*secrets* de GitHub (ver página **Cómo usar**) o súbelos al repositorio.")
 
-    autorizado = True
-    if gh_password_configurada():
-        clave = st.text_input("🔒 Contraseña para cargar archivos", type="password")
-        autorizado = gh_password_ok(clave)
-        if not autorizado:
-            st.caption("Ingresa la contraseña para habilitar la carga.")
-    else:
+    # El acceso a esta página ya está protegido por la contraseña de inicio
+    # (es una sección restringida). Si se llegó hasta aquí, se puede cargar.
+    autorizado = _acceso_total()
+    if not gh_password_configurada():
         st.caption("⚠️ No hay contraseña configurada (`APP_PASSWORD` en los secrets).")
 
     if not autorizado:
@@ -5647,22 +5644,88 @@ PAGINAS = {
     "📖  Cómo usar": pagina_ayuda,
 }
 
+# Páginas de ACCESO LIBRE: se pueden ver siempre, sin contraseña.
+# El resto de las visualizaciones queda detrás de la contraseña (APP_PASSWORD).
+PAGINAS_LIBRES = {"🚚  MRP E002", "💰  Costos"}
+
+
+def _acceso_total() -> bool:
+    """
+    True si el usuario tiene acceso completo:
+      · ya ingresó la contraseña en esta sesión, o
+      · no hay contraseña configurada (entonces todo es de acceso libre).
+    """
+    if not gh_password_configurada():
+        return True
+    return bool(st.session_state.get("autenticado"))
+
+
+def pantalla_login(nombre_pagina: str):
+    """
+    Pantalla que se muestra al entrar (en Inicio) o al elegir una sección
+    protegida sin haber ingresado la contraseña. Pide la contraseña e indica
+    que MRP E002 y Costos son de acceso libre.
+    """
+    st.markdown(
+        '<div class="hdr hdr-azul"><h1>🔒 Acceso al panel</h1>'
+        '<p>Ingresa la contraseña para ver las visualizaciones</p></div>',
+        unsafe_allow_html=True,
+    )
+    st.info(f"La sección **{nombre_pagina.strip()}** requiere contraseña.")
+    st.markdown(
+        "🔓 **Acceso libre (sin contraseña):**  🚚 **MRP E002**  ·  💰 **Costos**.  \n"
+        "Puedes entrar a esas dos secciones desde el menú de la izquierda en "
+        "cualquier momento, aunque no ingreses la contraseña."
+    )
+    clave = st.text_input("🔒 Contraseña de acceso", type="password", key="login_main")
+    if clave:
+        if gh_password_ok(clave):
+            st.session_state["autenticado"] = True
+            st.rerun()
+        else:
+            st.error("Contraseña incorrecta. Intenta de nuevo.")
+    st.caption("La contraseña da acceso a todas las visualizaciones excepto "
+               "**MRP E002** y **Costos**, que son de acceso libre.")
+
 
 def main():
+    if "autenticado" not in st.session_state:
+        st.session_state["autenticado"] = False
+    pass_conf = gh_password_configurada()
+    acceso_total = _acceso_total()
+
     with st.sidebar:
         st.markdown("### 📦 Panel MRP · Enaex")
         eleccion = st.radio(
             "Ir a:", list(PAGINAS.keys()), label_visibility="collapsed"
         )
         st.markdown("---")
+        # Estado de acceso (solo si hay contraseña configurada)
+        if pass_conf:
+            if acceso_total:
+                st.success("🔓 Acceso completo")
+                if st.button("🔒 Cerrar sesión", key="logout",
+                             use_container_width=True):
+                    st.session_state["autenticado"] = False
+                    st.rerun()
+            else:
+                st.warning("🔒 Acceso restringido")
+                st.caption("**MRP E002** y **Costos** son de **acceso libre**. "
+                           "El resto pide contraseña (se ingresa en la pantalla "
+                           "principal).")
+            st.markdown("---")
 
-    try:
-        PAGINAS[eleccion]()
-    except Exception as e:
-        st.error(f"Ocurrió un problema en esta página: {e}")
-        st.caption("Revisa que los Excel estén cargados en la página "
-                   "**📥 Cargar archivos**. Si el error persiste, avísanos "
-                   "con este mensaje.")
+    # Las páginas libres siempre se muestran; el resto exige acceso.
+    if acceso_total or eleccion in PAGINAS_LIBRES:
+        try:
+            PAGINAS[eleccion]()
+        except Exception as e:
+            st.error(f"Ocurrió un problema en esta página: {e}")
+            st.caption("Revisa que los Excel estén cargados en la página "
+                       "**📥 Cargar archivos**. Si el error persiste, avísanos "
+                       "con este mensaje.")
+    else:
+        pantalla_login(eleccion)
 
 
 if __name__ == "__main__":
