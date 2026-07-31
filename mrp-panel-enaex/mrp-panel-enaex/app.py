@@ -1643,6 +1643,13 @@ def historial_semanal(mrp=None) -> pd.DataFrame:
                 if len(gc):
                     okc = int((gc["Condicion Stock"].isin(["Stock OK", "Sobre Stock"])).sum())
                     fila[f"Disp. conservadora {clase}"] = round(100 * okc / len(gc), 2)
+            # Sin criticidad: materiales cuya Criticidad no es A, B ni C
+            # (mismo criterio que _criticidad_texto para "Sin criticidad").
+            crit_norm = g["Criticidad"].apply(lambda c: str(c or "").strip().upper())
+            gsc = g[~crit_norm.isin(["A", "B", "C"])]
+            if len(gsc):
+                oksc = int((gsc["Condicion Stock"].isin(["Stock OK", "Sobre Stock"])).sum())
+                fila["Disp. conservadora Sin criticidad"] = round(100 * oksc / len(gsc), 2)
 
         # --- Valorización de la semana (si hay precios de MM60) ---
         if precios is not None:
@@ -4093,6 +4100,7 @@ def pagina_mrp_e002():
                            "Disp. conservadora A": "#C0392B",
                            "Disp. conservadora B": "#E67E22",
                            "Disp. conservadora C": "#F1C40F",
+                           "Disp. conservadora Sin criticidad": "#7F8C8D",
                            "Sin stock": "#E74C3C", "Bajo stock": "#F39C12",
                            "Con OC": "#2E86DE", "Con Solped": "#2E7D32",
                            "Solped bloqueada": "#C62828", "Validación": "#E65100"}
@@ -4111,15 +4119,9 @@ def pagina_mrp_e002():
                                   yaxis=dict(title=eje, showgrid=True, gridcolor="#EEF1F4"))
                 return fig
 
-            e1, e2 = st.columns(2)
-            with e1:
-                st.plotly_chart(linea(["Disponibilidad", "Disponibilidad A"],
-                                      "% Disponibilidad por semana", "%"),
-                                use_container_width=True)
-            with e2:
-                st.plotly_chart(linea(["Sin stock", "Bajo stock"],
-                                      "Materiales sin stock / bajo stock"),
-                                use_container_width=True)
+            st.plotly_chart(linea(["Sin stock", "Bajo stock"],
+                                  "Materiales sin stock / bajo stock"),
+                            use_container_width=True)
 
             # Disponibilidad conservadora (solo Stock OK o Sobre Stock = disponible)
             st.markdown("##### Disponibilidad conservadora")
@@ -4128,12 +4130,14 @@ def pagina_mrp_e002():
                        "Bajo Stock y Quiebre cuentan como **no disponible (0%)**.")
             ce1, ce2 = st.columns(2)
             with ce1:
-                st.plotly_chart(linea(["Disponibilidad", "Disponibilidad conservadora"],
-                                      "Disponibilidad normal vs conservadora (general)", "%"),
+                st.plotly_chart(linea(["Disponibilidad conservadora"],
+                                      "Disponibilidad conservadora (general)", "%"),
                                 use_container_width=True)
             with ce2:
                 clases = [c for c in ["Disp. conservadora A", "Disp. conservadora B",
-                                      "Disp. conservadora C"] if c in hist.columns]
+                                      "Disp. conservadora C",
+                                      "Disp. conservadora Sin criticidad"]
+                          if c in hist.columns]
                 if clases:
                     st.plotly_chart(linea(clases,
                                           "Disponibilidad conservadora por criticidad", "%"),
