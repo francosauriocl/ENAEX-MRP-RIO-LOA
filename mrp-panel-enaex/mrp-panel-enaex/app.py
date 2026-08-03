@@ -1350,12 +1350,7 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
         "Centro": ("Centro",),
         "Area": ("Area", "Área"),
         "Criticidad": ("Criticidad",),
-        # El Planificación SIMPL cambió el nombre de esta columna: los archivos
-        # antiguos la traen como "Stock Seguridad" y los nuevos como
-        # "Punto de Reorden". Se aceptan ambos encabezados y se unifican con el
-        # nombre interno "Punto de Reorden".
-        "Punto de Reorden": ("Punto de Reorden", "Punto de reorden",
-                             "Stock Seguridad", "Stock seguridad"),
+        "Stock Seguridad": ("Stock Seguridad",),
         "Cantidad de Compra": ("Cantidad de Compra",),
         "Stock": ("Stock",),
         "UMB": ("UMB", "UN"),
@@ -1408,7 +1403,7 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
     for c in ("Solped", "OC en Transito"):
         if c in df.columns:
             df[c] = _norm_codigo(df[c])
-    for c in ("Stock", "Punto de Reorden", "Cantidad de Compra",
+    for c in ("Stock", "Stock Seguridad", "Cantidad de Compra",
               "Cantidad Solped", "Cantidad en Transito"):
         if c in df.columns:
             df[c] = _parse_numero(df[c])
@@ -2151,7 +2146,7 @@ def _unir_demanda(base: pd.DataFrame) -> pd.DataFrame:
 
     # Cumple_Demanda: comparar stock actual vs pronóstico (+ stock de seguridad)
     if "Stock" in base.columns and "Pronostico_Consolidado" in base.columns:
-        seg = base["Punto de Reorden"] if "Punto de Reorden" in base.columns else pd.Series(0, index=base.index)
+        seg = base["Stock Seguridad"] if "Stock Seguridad" in base.columns else pd.Series(0, index=base.index)
         stock_num = pd.to_numeric(base["Stock"], errors="coerce")
         demanda_num = pd.to_numeric(base["Pronostico_Consolidado"], errors="coerce")
         transito = pd.to_numeric(base.get("Cantidad en Transito"), errors="coerce").fillna(0) \
@@ -2422,9 +2417,8 @@ def calcular_parametros(demanda_df: pd.DataFrame | None = None) -> pd.DataFrame:
 def parametros_vs_mrp(mrp_df: pd.DataFrame | None = None,
                       params: pd.DataFrame | None = None) -> pd.DataFrame:
     """
-    Cruza los parámetros calculados con los del MRP actual (Punto de Reorden —
-    antes "Stock Seguridad" — y Lote de compra vigentes) para ver diferencias y
-    materiales desactualizados.
+    Cruza los parámetros calculados con los del MRP actual (Stock Seguridad y
+    Lote de compra vigentes) para ver diferencias y materiales desactualizados.
 
     Compara el punto de reorden conservador (ROP_60) con el stock de seguridad
     que aparece hoy en el MRP: dice si el nuevo parámetro SUBE o BAJA.
@@ -2437,7 +2431,7 @@ def parametros_vs_mrp(mrp_df: pd.DataFrame | None = None,
     mrp["Material"] = _norm_codigo(mrp["Material"])
 
     cols_mrp = {"Material": "Material", "Centro": "Centro",
-                "Punto de Reorden": "SS_MRP", "Cantidad de Compra": "Lote_MRP",
+                "Stock Seguridad": "SS_MRP", "Cantidad de Compra": "Lote_MRP",
                 "Stock": "Stock_actual", "Texto breve de material": "Descripción",
                 "Area": "Area", "Criticidad": "Criticidad"}
     disponibles = {k: v for k, v in cols_mrp.items() if k in mrp.columns}
@@ -3342,7 +3336,7 @@ RENOMBRE_PARAMETROS = {
     "Meses_con_demanda": "Demandas históricas",
     "SS": "SS real", "ROP": "ROP real", "SS_60": "SS sugerido",
     "ROP_60": "ROP sugerido", "Lote_Compra": "Lote sugerido",
-    "SS_MRP": "Punto de Reorden (MRP)", "Lote_MRP": "Lote actual (MRP)",
+    "SS_MRP": "SS actual (MRP)", "Lote_MRP": "Lote actual (MRP)",
     "Dif ROP - SS MRP": "Diferencia",
 }
 
@@ -3641,8 +3635,8 @@ def pagina_demanda():
     # Segunda fila: datos de gestión y cobertura (desde abastecimiento)
     if info_ab is not None:
         d1, d2, d3, d4, d5, d6 = st.columns(6)
-        seg = info_ab.get("Punto de Reorden")
-        d1.metric("Punto de Reorden", "—" if pd.isna(seg) else f"{seg:g}")
+        seg = info_ab.get("Stock Seguridad")
+        d1.metric("Stock de seguridad", "—" if pd.isna(seg) else f"{seg:g}")
         lote = info_ab.get("Cantidad de Compra")
         d2.metric("Lote de compra", "—" if pd.isna(lote) else f"{lote:g}")
         tat = info_ab.get("TAT Promedio")
@@ -4189,7 +4183,7 @@ def pagina_mrp_e002():
                 st.markdown("##### Materiales que requieren atención")
                 crit = datos[datos["Cumple_Demanda"].isin(["No cumple", "Urgente", "Alerta"])]
                 cols_d = [c for c in ["Material", "Texto breve de material", "Stock",
-                                      "Punto de Reorden", "Pronostico_Consolidado",
+                                      "Stock Seguridad", "Pronostico_Consolidado",
                                       "Tiempo_Prox_Demanda", "Cumple_Demanda",
                                       "Tipo_demanda", "Estado gestión", "TAT Promedio"]
                           if c in crit.columns]
@@ -4202,7 +4196,7 @@ def pagina_mrp_e002():
         st.markdown("##### Detalle de demanda por material")
         cols_dm = [c for c in ["Material", "Texto breve de material", "Centro",
                                "Tipo_demanda", "Pronostico_Consolidado",
-                               "Tiempo_Prox_Demanda", "Stock", "Punto de Reorden",
+                               "Tiempo_Prox_Demanda", "Stock", "Stock Seguridad",
                                "Cumple_Demanda"] if c in datos.columns]
         st.dataframe(datos[cols_dm].sort_values("Material"),
                      use_container_width=True, hide_index=True)
@@ -4228,7 +4222,7 @@ def pagina_mrp_e002():
                 st.caption(f"Centro {info.get('Centro','')} · {info.get('Criticidad texto','')}")
             with cB:
                 st.metric("Condición de stock", str(info.get("Condicion Stock", "—")))
-                st.caption(f"Stock: {info.get('Stock','—')} · P. Reorden: {info.get('Punto de Reorden','—')}")
+                st.caption(f"Stock: {info.get('Stock','—')} · Seg.: {info.get('Stock Seguridad','—')}")
             with cC:
                 ds = info.get("Días en solped")
                 st.metric("Solped", "—" if pd.isna(info.get("Solped")) else str(info.get("Solped")))
@@ -4289,7 +4283,7 @@ COLS_CONTROL = [
     "Material", "Texto breve de material", "Centro", "Area", "Grupo de compras",
     "Criticidad texto",
     # 2) Stock y su estado
-    "Stock", "Punto de Reorden", "Condicion Stock",
+    "Stock", "Stock Seguridad", "Condicion Stock",
     # 3) Demanda y cobertura
     "Tipo_demanda", "Pronostico_Consolidado", "Tiempo_hasta_demanda_txt",
     "Stock tras demanda", "Resultado demanda",
@@ -4592,7 +4586,7 @@ def pagina_control():
 
         c = st.columns(4)
         c[0].metric("Stock actual", f"{info.get('Stock', '—')}")
-        c[1].metric("Punto de Reorden", f"{info.get('Punto de Reorden', '—')}")
+        c[1].metric("Stock de seguridad", f"{info.get('Stock Seguridad', '—')}")
         c[2].metric("Estado del stock", str(info.get("Condicion Stock", "—")))
         c[3].metric("Criticidad", str(info.get("Criticidad texto", "—")))
 
@@ -5007,7 +5001,7 @@ def pagina_parametros():
         st.plotly_chart(barras(conteo,
                                {"Sube": "#E67E22", "Baja": "#2E86DE",
                                 "Igual": "#95A5A6", "Sin comparación": "#BDC3C7"},
-                               "ROP nuevo vs Punto de Reorden del MRP"),
+                               "ROP nuevo vs Stock Seguridad del MRP"),
                         use_container_width=True)
 
     st.markdown("---")
@@ -5037,7 +5031,7 @@ def pagina_parametros():
 
         st.markdown("**Comparación con el MRP actual**")
         c = st.columns(4)
-        c[0].metric("Punto de Reorden (MRP)", "—" if pd.isna(info.get("SS_MRP")) else f"{info['SS_MRP']:.0f}")
+        c[0].metric("SS en el MRP", "—" if pd.isna(info.get("SS_MRP")) else f"{info['SS_MRP']:.0f}")
         c[1].metric("Lote en el MRP", "—" if pd.isna(info.get("Lote_MRP")) else f"{info['Lote_MRP']:.0f}")
         c[2].metric("Estado", str(info.get("Estado parámetro", "—")))
         c[3].metric("ROP vs SS-MRP", str(info.get("Cambio ROP vs SS-MRP", "—")))
