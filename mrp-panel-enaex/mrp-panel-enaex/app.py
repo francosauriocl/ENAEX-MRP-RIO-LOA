@@ -1350,12 +1350,17 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
         "Centro": ("Centro",),
         "Area": ("Area", "Área"),
         "Criticidad": ("Criticidad",),
-        # El Planificación SIMPL cambió el nombre de esta columna: los archivos
-        # antiguos la traen como "Stock Seguridad" y los nuevos como
-        # "Punto de Reorden". Se aceptan ambos encabezados y se unifican con el
-        # nombre interno "Punto de Reorden".
+        # COLUMNA G del Planificación SIMPL. Cambió de nombre entre semanas:
+        # los archivos antiguos (31072026) la traen como "Stock Seguridad" y
+        # los nuevos (04082026) como "Punto de Reorden". Se aceptan ambas
+        # grafías —y variantes— y SIEMPRE se unifican con el nombre interno
+        # "Punto de Reorden", que es el que usa todo el panel.
         "Punto de Reorden": ("Punto de Reorden", "Punto de reorden",
-                             "Stock Seguridad", "Stock seguridad"),
+                             "Punto Reorden", "Punto de Re-orden",
+                             "Punto de Reorden (ROP)", "ROP",
+                             "Stock Seguridad", "Stock seguridad",
+                             "Stock de Seguridad", "Stock de seguridad",
+                             "Stock Seguridad (SS)"),
         "Cantidad de Compra": ("Cantidad de Compra",),
         "Stock": ("Stock",),
         "UMB": ("UMB", "UN"),
@@ -1389,6 +1394,16 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
         # (o una semana antigua no trae la columna nueva), todas terminan con el
         # MISMO nombre estándar y se combinan en una sola columna al concatenar.
         df_a = _renombrar(df_a, mapeo)
+        # Red de seguridad para la COLUMNA G: si el encabezado viniera escrito
+        # de otra forma (mayúsculas, acentos, texto extra, espacios dobles), se
+        # busca cualquier columna que hable de "reorden" o de "stock seguridad"
+        # y se renombra igual. Así el panel nunca se queda sin ese dato.
+        if "Punto de Reorden" not in df_a.columns:
+            for col in df_a.columns:
+                txt = " ".join(str(col).lower().split())
+                if "reorden" in txt or ("stock" in txt and "segur" in txt):
+                    df_a = df_a.rename(columns={col: "Punto de Reorden"})
+                    break
         fecha = _fecha_desde_nombre(a.name)
         df_a["Fecha MRP"] = fecha
         df_a["Semana"] = _etiqueta_semana(fecha)
@@ -1401,6 +1416,11 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
     # ficha del material nunca fallan al buscarla; simplemente queda vacía.
     if "Comentario compra y seguimiento" not in df.columns:
         df["Comentario compra y seguimiento"] = pd.NA
+
+    # Lo mismo con el Punto de Reorden (columna G): si ningún archivo la trae
+    # con un nombre reconocible, se crea vacía para que ninguna vista falle.
+    if "Punto de Reorden" not in df.columns:
+        df["Punto de Reorden"] = pd.NA
 
     df = df.dropna(subset=["Material"])
     df["Material"] = _norm_codigo(df["Material"])
@@ -3209,29 +3229,69 @@ COLOR_ESTADO_PARAM = {"Cambiar parámetros": "#C0392B", "Desactualizado": "#F39C
 # ==========================================================================
 #  CARGA CACHEADA
 # ==========================================================================
+def _firma_datos() -> tuple:
+    """
+    Huella de los Excel cargados: (nombre, tamaño, fecha de modificación) de
+    cada archivo de las carpetas de datos.
+
+    Se pasa como argumento a las funciones cacheadas. Si subes o reemplazas un
+    MRP, la huella cambia y Streamlit recalcula SOLO. Sin esto, la caché puede
+    seguir devolviendo la carga anterior y da la sensación de que el panel
+    "no lee" la columna o los valores nuevos del archivo.
+    """
+    carpetas = (config.CARPETA_MRP, config.CARPETA_MM60, config.CARPETA_ME5A,
+                config.CARPETA_ME2M, config.CARPETA_TAT,
+                config.CARPETA_MB51, config.CARPETA_MB5B)
+    firma = []
+    for carpeta in carpetas:
+        try:
+            for a in _listar_excels(carpeta):
+                info = a.stat()
+                firma.append((a.name, info.st_size, int(info.st_mtime)))
+        except Exception:
+            continue
+    return tuple(sorted(firma))
+
+
 @st.cache_data(show_spinner="Calculando demanda y pronósticos…")
-def cargar_demanda():
+def _cargar_demanda(_firma):
     r = construir()
     return r.serie, r.clasificacion, r.resultado, r.tabla_final
 
 
+def cargar_demanda():
+    return _cargar_demanda(_firma_datos())
+
+
 @st.cache_data(show_spinner="Integrando MRP + MM60 + ME5A + ME2M + TAT…")
-def cargar_abastecimiento(semana=None):
+def _cargar_abastecimiento(_firma, semana=None):
     r = construir_abastecimiento(semana=semana)
     return r.tabla, r.kpis
 
 
+def cargar_abastecimiento(semana=None):
+    return _cargar_abastecimiento(_firma_datos(), semana)
+
+
 @st.cache_data(show_spinner="Leyendo el histórico semanal del MRP…")
-def cargar_historial():
+def _cargar_historial(_firma):
     return historial_semanal()
 
 
+def cargar_historial():
+    return _cargar_historial(_firma_datos())
+
+
 @st.cache_data(show_spinner=False)
-def cargar_semanas():
+def _cargar_semanas(_firma):
     try:
         return semanas_disponibles()
     except Exception:
         return []
+
+
+def cargar_semanas():
+    return _cargar_semanas(_firma_datos())
 
 
 def selector_semana(key: str):
@@ -4911,8 +4971,12 @@ def pagina_costos():
 #  PÁGINA · PARÁMETROS DE INVENTARIO (SS, ROP, Lote)
 # ==========================================================================
 @st.cache_data(show_spinner="Calculando parámetros de inventario…")
-def cargar_parametros():
+def _cargar_parametros(_firma):
     return parametros_vs_mrp()
+
+
+def cargar_parametros():
+    return _cargar_parametros(_firma_datos())
 
 
 def pagina_parametros():
