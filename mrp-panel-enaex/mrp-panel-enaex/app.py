@@ -3498,7 +3498,7 @@ def estado_archivos_todos():
         ("MB5B (stock mensual)", CARPETA_MB5B, True,
          "Panel Demanda: stock de cierre de cada mes."),
         ("MRP semanal", CARPETA_MRP, True,
-         "Panel MRP E002: materiales, stock, condición, solped y OC."),
+         "Panel MRP E024: materiales, stock, condición, solped y OC."),
         ("MM60", CARPETA_MM60, False, "Precio, indicador ABC y grupo de compras."),
         ("ME5A", CARPETA_ME5A, False, "Fecha de la solped → días de gestión."),
         ("ME2M", CARPETA_ME2M, False, "Fecha y entrega de la OC → días y atrasos."),
@@ -3533,7 +3533,7 @@ Usa el menú de la izquierda para moverte entre las visualizaciones:
 
 - **📈 Demanda y Pronóstico** — histórico de cada material (ingresos, egresos y stock),
   su clasificación de demanda y el pronóstico de la próxima demanda.
-- **🚚 MRP E002** — estado de los materiales: solped, OC, días de gestión,
+- **🚚 MRP E024** — estado de los materiales: solped, OC, días de gestión,
   compras nacionales o internacionales, disponibilidad y cobertura de la demanda.
 - **📥 Cargar archivos** — subir las descargas de SAP para actualizar los cálculos.
 - **📖 Cómo usar** — guía completa y explicación de los métodos.
@@ -3815,7 +3815,7 @@ def pagina_demanda():
 # ==========================================================================
 def pagina_mrp_e002():
     st.markdown(
-        '<div class="hdr hdr-ambar"><h1>🚚 MRP E002 · Estado y control de materiales</h1>'
+        '<div class="hdr hdr-ambar"><h1>🚚 MRP E024 · Estado y control de materiales</h1>'
         '<p>Solped, OC, días de gestión, nacionalidad, disponibilidad, TAT y demanda</p></div>',
         unsafe_allow_html=True,
     )
