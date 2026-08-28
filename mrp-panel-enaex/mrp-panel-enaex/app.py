@@ -4327,7 +4327,7 @@ def pagina_mrp_e002():
         st.dataframe(vista, use_container_width=True, hide_index=True)
         st.download_button("⬇️  Descargar tabla completa (CSV)",
                            data=vista.to_csv(index=False).encode("utf-8-sig"),
-                           file_name="mrp_e002_materiales.csv", mime="text/csv")
+                           file_name="mrp_e024_materiales.csv", mime="text/csv")
 
 
 # ==========================================================================
@@ -5628,7 +5628,7 @@ def pagina_ayuda():
 - **★ estrella**: pronóstico de la próxima demanda.
 - **✳ asterisco**: pronóstico con momento *indeterminado*.
 
-**🚚 MRP E002** — estado de cada material: solped, OC, días de gestión,
+**🚚 MRP E024** — estado de cada material: solped, OC, días de gestión,
 validación, solped bloqueada, nacional/internacional, TAT y cobertura de demanda.
 
 ---
@@ -5648,7 +5648,7 @@ demanda; CV² cuánto varía su tamaño. Cortes: ADI = 1,32 · CV² = 0,49.
 
 ---
 
-### Cómo se unen las tablas del MRP E002
+### Cómo se unen las tablas del MRP E024
 
 | Fuente | Se une por |
 |---|---|
@@ -5708,7 +5708,7 @@ repositorio.
 PAGINAS = {
     "🏠  Inicio": pagina_inicio,
     "🎯  Control de Materiales": pagina_control,
-    "🚚  MRP E002": pagina_mrp_e002,
+    "🚚  MRP E024": pagina_mrp_e002,
     "💰  Costos": pagina_costos,
     "🎛️  Parámetros de inventario": pagina_parametros,
     "🏭  Proveedores y compras": pagina_proveedores,
