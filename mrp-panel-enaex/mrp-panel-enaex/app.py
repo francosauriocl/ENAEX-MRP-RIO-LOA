@@ -1291,7 +1291,7 @@ def _fila_encabezado(ruta, hoja, palabra="Material", max_filas=40):
 def _fecha_desde_nombre(nombre: str) -> pd.Timestamp | None:
     """
     Saca la fecha del NOMBRE del archivo del MRP semanal.
-      'Planificacion_Simpl_-_Prillex_08072026.xlsx'  ->  2026-07-08
+      'Planificacion_Simpl_-_Rio_Loa_08072026.xlsx'  ->  2026-07-08
 
     Acepta ddmmyyyy pegado (08072026) y separado (08-07-2026, 08.07.2026, 08_07_2026).
     Devuelve None si no encuentra una fecha válida.
@@ -5564,7 +5564,7 @@ def pagina_cargar():
          "MB5B LAYOUT / CESBI ANALISIS DEMANDA CENTRO POWER BI "),
         ("MRP semanal — Planificacion_Simpl", "MRP", CARPETA_MRP, False,
          "Se ingresa el Excel de Planificación SIMPL. Debe traer la fecha en el "
-         "nombre (ej. Planificacion_Simpl_-_Prillex_08072026.xlsx)."),
+         "nombre (ej. Planificacion_Simpl_-_Rio_Loa_08072026.xlsx)."),
         ("MM60 — maestro de materiales", "MM60", CARPETA_MM60, True,
          "MM60 LAYOUT / MRP: datos del NUEVO REPORTE MRP."),
         ("ME5A — solicitudes (solped)", "ME5A", CARPETA_ME5A, True,
@@ -5583,7 +5583,7 @@ def pagina_cargar():
     st.info("📌 El **MRP semanal** y el **MB5B** se **acumulan**: cada archivo nuevo "
             "se suma a los anteriores para poder ver la evolución en el tiempo. "
             "Por eso el MRP debe traer **la fecha en el nombre** "
-            "(por ejemplo `Planificacion_Simpl_-_Prillex_08072026.xlsx`), que es de "
+            "(por ejemplo `Planificacion_Simpl_-_Rio_Loa_08072026`), que es de "
             "donde se saca la semana. El resto de archivos reemplaza al anterior.")
     for etiqueta, sub, carpeta, reemplaza, instruccion in fuentes:
         modo = "**reemplaza** el anterior" if reemplaza else "**se agrega** a los anteriores"
