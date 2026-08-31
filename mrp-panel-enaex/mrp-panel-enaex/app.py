@@ -2551,6 +2551,12 @@ def cargar_me2m_historico(ruta=None) -> pd.DataFrame:
     # valores
     df["Precio neto"] = pd.to_numeric(df.get("Precio neto"), errors="coerce")
     df["Cantidad de pedido"] = pd.to_numeric(df.get("Cantidad de pedido"), errors="coerce")
+
+    # --- CORRECCIÓN AUTOMÁTICA SAP (Error de digitación OC Framaral 4502559108) ---
+    col_doc = "Documento comp" if "Documento comp" in df.columns else "Documento compras"
+    if col_doc in df.columns:
+        df.loc[df[col_doc].astype(str).str.contains("4502559108"), "Precio neto"] = 369
+
     df["Valor compra"] = df["Precio neto"] * df["Cantidad de pedido"]
     df["Moneda"] = df.get("Moneda", "CLP").fillna("CLP").astype(str).str.strip()
     # contrato marco: hay valor no vacío
