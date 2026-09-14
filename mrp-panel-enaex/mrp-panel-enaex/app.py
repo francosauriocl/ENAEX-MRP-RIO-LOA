@@ -4551,6 +4551,9 @@ def pagina_control():
         # --- BARRA DE FILTROS RÁPIDOS ---
         f_col1, f_col2 = st.columns([1.5, 2.5])
         
+        # --- BARRA DE FILTROS RÁPIDOS SIMÉTRICOS ---
+        f_col1, f_col2 = st.columns(2)
+        
         with f_col1:
             sel_crit_filtro = st.selectbox(
                 "Filtrar por Criticidad",
@@ -4560,10 +4563,10 @@ def pagina_control():
             )
         
         with f_col2:
-            sel_tat_filtro = st.radio(
+            sel_tat_filtro = st.selectbox(
                 "Filtrar por Gestión TAT",
-                ["Todos los estados", "🔴 Solo 'Gestionar ya'", "🟡 Solo 'Verificar'"],
-                horizontal=True,
+                ["Todos los estados", "🔴 Gestionar ya", "🟠 Gestionar pronto", "🟢 Hay tiempo", "🟡 Verificar"],
+                index=0,
                 key="filtro_rapido_tat"
             )
 
@@ -4572,10 +4575,10 @@ def pagina_control():
         if sel_crit_filtro != "Todas":
             criticos = criticos[criticos["Criticidad texto"] == sel_crit_filtro]
         
-        if "Solo 'Gestionar ya'" in sel_tat_filtro:
-            criticos = criticos[criticos["Gestionar según TAT"].astype(str).str.contains("Gestionar ya", na=False)]
-        elif "Solo 'Verificar'" in sel_tat_filtro:
-            criticos = criticos[criticos["Gestionar según TAT"].astype(str).str.contains("Verificar", na=False)]
+        if sel_tat_filtro != "Todos los estados":
+            # Extrae la palabra clave del estado seleccionado (Gestionar ya, Gestionar pronto, Hay tiempo, Verificar)
+            estado_limpio = sel_tat_filtro.split(" ", 1)[-1]
+            criticos = criticos[criticos["Gestionar según TAT"].astype(str).str.contains(estado_limpio, na=False)]
 
         st.caption(f"Mostrando **{len(criticos)}** de **{len(criticos_base)}** materiales con necesidad de acción.")
 
