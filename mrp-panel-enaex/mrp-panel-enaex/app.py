@@ -4551,8 +4551,6 @@ def pagina_control():
         else:
             criticos_base["Gestionar según TAT"] = "🟡 Verificar"
 
-        # --- BARRA DE FILTROS RÁPIDOS ---
-        f_col1, f_col2 = st.columns([1.5, 2.5])
         
         # --- BARRA DE FILTROS RÁPIDOS SIMÉTRICOS ---
         f_col1, f_col2 = st.columns(2)
