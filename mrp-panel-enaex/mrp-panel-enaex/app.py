@@ -1857,7 +1857,7 @@ def _gestion_tat_label(accion) -> str:
         return "🟠 Gestionar pronto"
     if a.startswith("Pedir en"):
         return "🟢 Hay tiempo"
-    return "—"
+    return "🟡 Verificar"
 
 
 def _accion_tat(dias_hasta_demanda, tat_promedio, resultado, margen=20):
@@ -4546,7 +4546,7 @@ def pagina_control():
         if "Acción de compra" in criticos_base.columns:
             criticos_base["Gestionar según TAT"] = criticos_base["Acción de compra"].map(_gestion_tat_label)
         else:
-            criticos_base["Gestionar según TAT"] = "—"
+            criticos_base["Gestionar según TAT"] = "🟡 Verificar"
 
         # --- BARRA DE FILTROS RÁPIDOS ---
         f_col1, f_col2 = st.columns([1.5, 2.5])
@@ -4562,7 +4562,7 @@ def pagina_control():
         with f_col2:
             sel_tat_filtro = st.radio(
                 "Filtrar por Gestión TAT",
-                ["Todos los estados", "🔴 Solo 'Gestionar ya'"],
+                ["Todos los estados", "🔴 Solo 'Gestionar ya'", "🟡 Solo 'Verificar'"],
                 horizontal=True,
                 key="filtro_rapido_tat"
             )
@@ -4574,6 +4574,8 @@ def pagina_control():
         
         if "Solo 'Gestionar ya'" in sel_tat_filtro:
             criticos = criticos[criticos["Gestionar según TAT"].astype(str).str.contains("Gestionar ya", na=False)]
+        elif "Solo 'Verificar'" in sel_tat_filtro:
+            criticos = criticos[criticos["Gestionar según TAT"].astype(str).str.contains("Verificar", na=False)]
 
         st.caption(f"Mostrando **{len(criticos)}** de **{len(criticos_base)}** materiales con necesidad de acción.")
 
@@ -4591,7 +4593,6 @@ def pagina_control():
         vista_c = vista_c.assign(_o=criticos["Resultado demanda"].map(orden_urg).values) \
                          .sort_values(["_o", "Descripción"]).drop(columns="_o")
         
-        # Agregar sugerencias de proveedores históricos
         vista_c = agregar_proveedores_a_tabla(vista_c, "Material", top=5, incluir_tat=False)
         st.caption("Al final de cada fila se proponen hasta **5 proveedores** del "
                    "historial (nombre y OTIF), de mejor a peor por TAT. "
@@ -4599,7 +4600,7 @@ def pagina_control():
         
         vista_c = buscar_en_tabla(vista_c, "buscar_ctl_crit")
 
-        # Función para pintar la fila completa con un tinte claro
+        # Pintar filas: rojo pastel, naranja suave, verde suave, y 'Verificar' se queda en blanco (transparente)
         def _colorear_por_tat(row):
             val = str(row.get("¿Cuándo gestionar? (TAT)", ""))
             if "Gestionar ya" in val:
@@ -4609,13 +4610,12 @@ def pagina_control():
             elif "Hay tiempo" in val:
                 bg = "background-color: rgba(39, 174, 96, 0.12);"   # Verde pastel suave
             else:
-                bg = ""
+                bg = ""  # 'Verificar' y cualquier otro caso queda sin fondo
             return [bg] * len(row)
 
-        # Aplicar el estilo a todas las columnas de la fila
         vista_estilizada = vista_c.style.apply(_colorear_por_tat, axis=1)
-
         st.dataframe(vista_estilizada, use_container_width=True, hide_index=True)
+        
         
         st.download_button("⬇️  Descargar materiales críticos (CSV)",
                            data=vista_c.to_csv(index=False).encode("utf-8-sig"),
