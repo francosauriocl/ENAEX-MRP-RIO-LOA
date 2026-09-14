@@ -1372,7 +1372,10 @@ def cargar_mrp(ruta=None) -> pd.DataFrame:
         "Proveedor": ("Proveedor",),
         "Fecha de entrega": ("Fecha de entrega",),
         "Usuario": ("Usuario",),
-        "Observación": ("Observación", "Observacion"),
+        "Observación": (
+            "Observación", "Observacion",
+            "Observación MRP", "Observacion MRP",
+            "Observación  MRP", "Observacion  MRP"),
         # Nueva columna del Planificación SIMPL: comentario de compra y
         # seguimiento. Va al final, junto a la Observación. Se aceptan varias
         # variantes de nombre por si el encabezado cambia levemente.
