@@ -4528,7 +4528,10 @@ def pagina_control():
         conteo = {a: b for a, b in conteo.items() if b}
         st.plotly_chart(barras(conteo, COLOR_COND, "Estado actual del stock"),
                         use_container_width=True)
+    st.markdown("---")
+    st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
 
+    
     # ---------------- Materiales críticos con filtros interactivos ----------------
     st.markdown("#### 🚨 Materiales que necesitan acción")
     st.caption("No alcanzan a cubrir su próxima demanda (**No cumple**), o quedan "
