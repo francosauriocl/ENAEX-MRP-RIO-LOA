@@ -4595,7 +4595,25 @@ def pagina_control():
                    "Desplázate a la derecha para verlos.")
         
         vista_c = buscar_en_tabla(vista_c, "buscar_ctl_crit")
-        st.dataframe(vista_c, use_container_width=True, hide_index=True)
+
+        # Función para pintar la fila completa con un tinte claro
+        def _colorear_por_tat(row):
+            val = str(row.get("¿Cuándo gestionar? (TAT)", ""))
+            if "Gestionar ya" in val:
+                bg = "background-color: rgba(231, 76, 60, 0.12);"   # Rojo pastel suave
+            elif "Gestionar pronto" in val:
+                bg = "background-color: rgba(243, 156, 18, 0.14);"  # Naranja suave
+            elif "Hay tiempo" in val:
+                bg = "background-color: rgba(39, 174, 96, 0.12);"   # Verde pastel suave
+            else:
+                bg = ""
+            return [bg] * len(row)
+
+        # Aplicar el estilo a todas las columnas de la fila
+        vista_estilizada = vista_c.style.apply(_colorear_por_tat, axis=1)
+
+        st.dataframe(vista_estilizada, use_container_width=True, hide_index=True)
+        
         st.download_button("⬇️  Descargar materiales críticos (CSV)",
                            data=vista_c.to_csv(index=False).encode("utf-8-sig"),
                            file_name="materiales_criticos.csv", mime="text/csv",
