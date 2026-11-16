@@ -3304,15 +3304,13 @@ def enviar_alerta_stock_critico(forzar_sin_hallazgos: bool = False) -> tuple[boo
     msg.attach(MIMEText(cuerpo_html, "html", "utf-8"))
 
     try:
-        with smtplib.SMTP("smtp.office365.com", 587, timeout=20) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(remitente, str(password).strip())
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as server:
+            server.login(remitente, str(password).replace(" ", ""))
             server.sendmail(remitente, destinatarios, msg.as_string())
-        return True, f"Correo de alerta enviado desde Outlook a {', '.join(destinatarios)} ({len(alertas)} material(es) reportado(s))."
+        return True, f"Correo de alerta enviado a {', '.join(destinatarios)} ({len(alertas)} material(es) reportado(s))."
     except Exception as e:
-        return False, f"Error al enviar correo por Outlook SMTP: {e}"
+        return False, f"Error al enviar el correo SMTP: {e}"
+        
 
 # ========================================================================
 #  INTERFAZ (páginas y navegación)
