@@ -3178,6 +3178,141 @@ def gh_agregar_mb5b(nombre: str, contenido: bytes) -> str:
     _put(cfg, f"{carpeta}/{nombre}", contenido, f"Agregar MB5B: {nombre}")
     return nombre
 
+# ========================================================================
+#  NOTIFICACIONES POR CORREO OUTLOOK (ALERTA DE QUIEBRE CRÍTICO SIN OC)
+# ========================================================================
+def enviar_alerta_stock_critico(forzar_sin_hallazgos: bool = False) -> tuple[bool, str]:
+    """
+    Revisa la semana más reciente del MRP. Filtra materiales con:
+      - Criticidad Alta ('A')
+      - Stock <= 0 (o Quiebre Stock)
+      - Sin OC en tránsito
+    Envía un correo HTML vía Outlook / Office 365.
+    """
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    remitente = _secret("EMAIL_REMITENTE")
+    password = _secret("EMAIL_PASSWORD")
+    destinatarios_raw = _secret("EMAIL_DESTINATARIO")
+    app_url = _secret("APP_URL", "")
+
+    if not remitente or not password or not destinatarios_raw:
+        return False, "Faltan configurar EMAIL_REMITENTE, EMAIL_PASSWORD o EMAIL_DESTINATARIO en los Secrets."
+
+    destinatarios = [d.strip() for d in str(destinatarios_raw).split(",") if d.strip()]
+
+    try:
+        st.cache_data.clear()
+        semanas = semanas_disponibles()
+        ultima_sem = semanas[-1] if semanas else None
+        tabla, _ = construir_abastecimiento(semana=ultima_sem)
+    except Exception as e:
+        return False, f"No se pudo leer el MRP actualizado para evaluar alertas: {e}"
+
+    if tabla.empty:
+        return False, "La tabla del MRP está vacía."
+
+    # 1. Criticidad Alta
+    crit_a = tabla.get("Criticidad", pd.Series("", index=tabla.index)).astype(str).str.strip().str.upper() == "A"
+    # 2. Stock en 0 o Quiebre Stock
+    stock_num = pd.to_numeric(tabla.get("Stock"), errors="coerce").fillna(0)
+    cond_quiebre = tabla.get("Condicion Stock", pd.Series("", index=tabla.index)).astype(str).str.strip() == "Quiebre Stock"
+    sin_stock = (stock_num <= 0) | cond_quiebre
+    # 3. Sin OC en tránsito
+    sin_oc = ~_tiene_valor(tabla.get("OC en Transito", pd.Series("", index=tabla.index)))
+
+    alertas = tabla[crit_a & sin_stock & sin_oc].copy()
+
+    if alertas.empty:
+        if not forzar_sin_hallazgos:
+            return True, f"Revisión completada ({ultima_sem}): 0 materiales de criticidad Alta en stock 0 sin OC. No se envió correo."
+        cuerpo_html = f"""
+        <html><body style="font-family: Arial, sans-serif; color: #1B2A3A;">
+            <h2 style="color: #27AE60;">✅ Reporte MRP Río Loa ({ultima_sem}) — Sin quiebres críticos sin OC</h2>
+            <p>Se ejecutó la revisión automática sobre la última planificación semanal y <b>no se detectaron materiales de Criticidad Alta con stock 0 sin Orden de Compra</b>.</p>
+        </body></html>
+        """
+        asunto = f"✅ MRP Río Loa ({ultima_sem}) — Sin quiebres críticos sin OC"
+    else:
+        filas_html = ""
+        for _, r in alertas.sort_values("Material").iterrows():
+            mat = r.get("Material", "")
+            desc = r.get("Texto breve de material", "")
+            area = r.get("Area", "—")
+            rop = r.get("Punto de Reorden", "—")
+            rop_txt = "—" if pd.isna(rop) else f"{rop:g}"
+            estado_g = r.get("Estado gestión", "Sin gestión")
+            solped = r.get("Solped", "")
+            solped_txt = f" (Solped: {solped})" if pd.notna(solped) and str(solped).strip() not in ("", "None", "nan") else ""
+            obs = r.get("Observación", "")
+            obs_txt = "" if pd.isna(obs) else str(obs)
+
+            filas_html += f"""
+            <tr>
+                <td style="padding: 8px; border: 1px solid #E2E6EB; font-family: monospace;"><b>{mat}</b></td>
+                <td style="padding: 8px; border: 1px solid #E2E6EB;">{desc}</td>
+                <td style="padding: 8px; border: 1px solid #E2E6EB;">{area}</td>
+                <td style="padding: 8px; border: 1px solid #E2E6EB; text-align: center; color: #C0392B;"><b>0</b></td>
+                <td style="padding: 8px; border: 1px solid #E2E6EB; text-align: center;">{rop_txt}</td>
+                <td style="padding: 8px; border: 1px solid #E2E6EB;">{estado_g}{solped_txt}</td>
+                <td style="padding: 8px; border: 1px solid #E2E6EB; font-size: 12px;">{obs_txt}</td>
+            </tr>
+            """
+
+        boton_html = (
+            f'<p style="margin-top: 20px;"><a href="{app_url}" style="background-color: #14618A; color: #ffffff; '
+            f'padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold;">Abrir Panel MRP Río Loa</a></p>'
+            if app_url else ""
+        )
+
+        cuerpo_html = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; color: #1B2A3A; line-height: 1.5;">
+            <div style="background-color: #C0392B; color: white; padding: 14px 20px; border-radius: 8px;">
+                <h2 style="margin: 0; font-size: 18px;">🚨 Alerta MRP Río Loa ({ultima_sem}): {len(alertas)} material(es) crítico(s) en Stock 0 sin OC</h2>
+            </div>
+            <p>Se ha actualizado la planificación semanal del MRP y se detectaron los siguientes materiales con <b>Criticidad Alta</b> que presentan <b>Stock 0</b> y aún <b>no tienen Orden de Compra (OC) en tránsito</b>:</p>
+            <table style="border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 12px;">
+                <thead>
+                    <tr style="background-color: #F5F6F8; text-align: left;">
+                        <th style="padding: 8px; border: 1px solid #E2E6EB;">Material</th>
+                        <th style="padding: 8px; border: 1px solid #E2E6EB;">Descripción</th>
+                        <th style="padding: 8px; border: 1px solid #E2E6EB;">Área</th>
+                        <th style="padding: 8px; border: 1px solid #E2E6EB; text-align: center;">Stock</th>
+                        <th style="padding: 8px; border: 1px solid #E2E6EB; text-align: center;">P. Reorden</th>
+                        <th style="padding: 8px; border: 1px solid #E2E6EB;">Estado Gestión</th>
+                        <th style="padding: 8px; border: 1px solid #E2E6EB;">Observación MRP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {filas_html}
+                </tbody>
+            </table>
+            {boton_html}
+            <p style="font-size: 11px; color: #6B7A8D; margin-top: 24px;">Notificación automática generada por Panel MRP · Enaex S.A.</p>
+        </body>
+        </html>
+        """
+        asunto = f"🚨 ALERTA MRP ({ultima_sem}): {len(alertas)} materiales críticos en Stock 0 sin OC"
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = asunto
+    msg["From"] = remitente
+    msg["To"] = ", ".join(destinatarios)
+    msg.attach(MIMEText(cuerpo_html, "html", "utf-8"))
+
+    try:
+        with smtplib.SMTP("smtp.office365.com", 587, timeout=20) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(remitente, str(password).strip())
+            server.sendmail(remitente, destinatarios, msg.as_string())
+        return True, f"Correo de alerta enviado desde Outlook a {', '.join(destinatarios)} ({len(alertas)} material(es) reportado(s))."
+    except Exception as e:
+        return False, f"Error al enviar correo por Outlook SMTP: {e}"
 
 # ========================================================================
 #  INTERFAZ (páginas y navegación)
@@ -5656,19 +5791,42 @@ def pagina_cargar():
                                    label_visibility="collapsed")
         if archivo is not None and st.button(f"Guardar {sub}", key=f"btn_{sub}"):
             try:
+                guardar_local(carpeta, archivo, reemplazar=reemplaza)
                 if modo_github:
                     gh_guardar(sub, archivo.name, archivo.getvalue(), reemplazar=reemplaza)
                     st.success(f"{sub} guardado en GitHub: `{gh_prefijo()}/{sub}/"
                                f"{archivo.name}`. "
                                "La app se actualizará sola en ~1 minuto.")
                 else:
-                    guardar_local(carpeta, archivo, reemplazar=reemplaza)
-                    st.cache_data.clear()
                     st.success(f"{sub} guardado: {archivo.name}.")
+
+                # Disparador automático al subir el MRP semanal
+                if sub == "MRP":
+                    with st.spinner("Evaluando materiales críticos en stock 0 sin OC..."):
+                        ok_mail, msg_mail = enviar_alerta_stock_critico(forzar_sin_hallazgos=False)
+                        if ok_mail:
+                            st.info(f"📧 {msg_mail}")
+                        else:
+                            st.warning(f"⚠️ Alerta por correo: {msg_mail}")
+
+                if not modo_github:
+                    st.cache_data.clear()
                     st.rerun()
             except Exception as e:
                 st.error(f"No se pudo guardar {sub}: {e}")
         st.markdown("")
+
+    st.markdown("---")
+    st.markdown("##### 📧 Notificaciones de quiebre crítico")
+    if st.button("Enviar revisión de alerta ahora (Prueba / Manual)", key="btn_test_mail"):
+        with st.spinner("Evaluando MRP actual y enviando correo..."):
+            ok_m, msg_m = enviar_alerta_stock_critico(forzar_sin_hallazgos=True)
+            if ok_m:
+                st.success(msg_m)
+            else:
+                st.error(msg_m)
+
+
 
 
 # ==========================================================================
