@@ -3207,7 +3207,7 @@ def enviar_alerta_stock_critico(forzar_sin_hallazgos: bool = False) -> tuple[boo
         st.cache_data.clear()
         semanas = semanas_disponibles()
         ultima_sem = semanas[-1] if semanas else None
-        tabla, _ = construir_abastecimiento(semana=ultima_sem)
+        tabla = construir_abastecimiento(semana=ultima_sem).tabla
     except Exception as e:
         return False, f"No se pudo leer el MRP actualizado para evaluar alertas: {e}"
 
