@@ -6076,6 +6076,7 @@ PAGINAS = {
     "🎛️  Parámetros de inventario": pagina_parametros,
     "🏭  Proveedores y compras": pagina_proveedores,
     "📈  Demanda y Pronóstico": pagina_demanda,
+    "🤖  Copiloto IA": pagina_copiloto,
     "📥  Cargar archivos": pagina_cargar,
     "📖  Cómo usar": pagina_ayuda,
 }
