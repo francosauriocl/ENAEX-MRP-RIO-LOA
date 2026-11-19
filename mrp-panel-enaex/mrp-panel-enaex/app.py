@@ -3449,19 +3449,39 @@ def pagina_copiloto():
                             types.Content(role=rol, parts=[types.Part.from_text(text=m["content"])])
                         )
 
-                    resp = client.models.generate_content(
-                        model="gemini-3.8-flash",
-                        contents=historial_api,
-                        config=types.GenerateContentConfig(
-                            system_instruction=instruccion_sistema,
-                            temperature=0.2,
-                        ),
-                    )
+                    import time
+
+                    modelos = ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.5-flash"]
+                    resp = None
+                    ultimo_error = None
+
+                    for modelo in modelos:
+                        for intento in range(2):
+                            try:
+                                resp = client.models.generate_content(
+                                    model=modelo,
+                                    contents=historial_api,
+                                    config=types.GenerateContentConfig(
+                                        system_instruction=instruccion_sistema,
+                                        temperature=0.2,
+                                    ),
+                                )
+                                break
+                            except Exception as e:
+                                ultimo_error = e
+                                if "503" in str(e) or "429" in str(e) or "UNAVAILABLE" in str(e):
+                                    time.sleep(1.5)
+                                    continue
+                                raise
+                        if resp is not None:
+                            break
+
+                    if resp is None:
+                        raise ultimo_error
+
                     respuesta_txt = resp.text
                     st.markdown(respuesta_txt)
                     st.session_state.chat_mrp_historial.append({"role": "assistant", "content": respuesta_txt})
-                except Exception as e:
-                    st.error(f"Error al consultar el Copiloto IA: {e}")
     
 # ========================================================================
 #  INTERFAZ (páginas y navegación)
