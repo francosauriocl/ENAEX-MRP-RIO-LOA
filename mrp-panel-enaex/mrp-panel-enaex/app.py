@@ -3450,7 +3450,7 @@ def pagina_copiloto():
                         )
 
                     resp = client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model="gemini-3.8-flash",
                         contents=historial_api,
                         config=types.GenerateContentConfig(
                             system_instruction=instruccion_sistema,
