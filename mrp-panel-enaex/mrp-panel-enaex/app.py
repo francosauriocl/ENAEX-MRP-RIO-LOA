@@ -3400,7 +3400,6 @@ def pagina_copiloto():
             st.session_state.chat_mrp_historial = []
             st.rerun()
 
-    # Sugerencias rápidas si el chat está vacío
     if not st.session_state.chat_mrp_historial:
         st.markdown("**Preguntas sugeridas:**")
         ejemplos = [
@@ -3414,7 +3413,6 @@ def pagina_copiloto():
                 st.session_state.prompt_rapido = ej
                 st.rerun()
 
-    # Renderizar mensajes anteriores
     for msg in st.session_state.chat_mrp_historial:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -3431,6 +3429,8 @@ def pagina_copiloto():
         with st.chat_message("assistant"):
             with st.spinner("Analizando planificación MRP..."):
                 try:
+                    import time
+
                     contexto_datos = _construir_contexto_mrp()
                     instruccion_sistema = (
                         "Eres un ingeniero experto en abastecimiento y planificación MRP de Enaex S.A. (Planta Río Loa - E024). "
@@ -3441,15 +3441,12 @@ def pagina_copiloto():
                     )
 
                     client = genai.Client(api_key=api_key)
-                    # Enviamos los últimos 6 turnos para mantener contexto conversacional ligero
                     historial_api = []
                     for m in st.session_state.chat_mrp_historial[-6:]:
                         rol = "user" if m["role"] == "user" else "model"
                         historial_api.append(
                             types.Content(role=rol, parts=[types.Part.from_text(text=m["content"])])
                         )
-
-                    import time
 
                     modelos = ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.5-flash"]
                     resp = None
@@ -3482,6 +3479,8 @@ def pagina_copiloto():
                     respuesta_txt = resp.text
                     st.markdown(respuesta_txt)
                     st.session_state.chat_mrp_historial.append({"role": "assistant", "content": respuesta_txt})
+                except Exception as e:
+                    st.error(f"Error al consultar el Copiloto IA: {e}")
     
 # ========================================================================
 #  INTERFAZ (páginas y navegación)
