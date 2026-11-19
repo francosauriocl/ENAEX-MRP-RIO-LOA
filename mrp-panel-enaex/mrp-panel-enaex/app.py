@@ -3311,7 +3311,152 @@ def enviar_alerta_stock_critico(forzar_sin_hallazgos: bool = False) -> tuple[boo
     except Exception as e:
         return False, f"Error al enviar el correo SMTP: {e}"
         
+# ========================================================================
+#  COPILOTO ANALÍTICO MRP (GEMINI)
+# ========================================================================
+def _construir_contexto_mrp() -> str:
+    """Extrae un resumen estructurado y compacto de la semana activa para el LLM."""
+    semanas = semanas_disponibles()
+    ultima_sem = semanas[-1] if semanas else "Sin datos"
+    res = construir_abastecimiento(semana=ultima_sem)
+    tabla = res.tabla
 
+    if tabla.empty:
+        return "No hay datos cargados en el MRP actual."
+
+    total_items = len(tabla)
+    crit_a = tabla[tabla.get("Criticidad", "").astype(str).str.upper() == "A"]
+    quiebres = tabla[tabla.get("Condicion Stock", "") == "Quiebre Stock"]
+    bajo_rop = tabla[tabla.get("Condicion Stock", "") == "Bajo ROP"]
+    sin_oc = tabla[~_tiene_valor(tabla.get("OC en Transito", pd.Series("", index=tabla.index)))]
+    crit_quiebre_sin_oc = tabla[
+        (tabla.get("Criticidad", "").astype(str).str.upper() == "A")
+        & ((pd.to_numeric(tabla.get("Stock"), errors="coerce").fillna(0) <= 0) | (tabla.get("Condicion Stock", "") == "Quiebre Stock"))
+        & (~_tiene_valor(tabla.get("OC en Transito", pd.Series("", index=tabla.index))))
+    ]
+
+    cols_clave = [
+        c for c in [
+            "Material", "Texto breve de material", "Criticidad", "Area",
+            "Stock", "Punto de Reorden", "Stock Seguridad", "Condicion Stock",
+            "Estado gestión", "Solped", "OC en Transito", "Proveedor",
+            "Fecha Entrega OC", "Dias Atraso OC", "Dias_TAT", "Observación"
+        ]
+        if c in tabla.columns
+    ]
+
+    # Priorizamos materiales críticos, en quiebre, bajo ROP o con OC atrasada para optimizar contexto
+    mask_relevante = (
+        (tabla.get("Criticidad", "").astype(str).str.upper() == "A")
+        | (tabla.get("Condicion Stock", "").isin(["Quiebre Stock", "Bajo ROP"]))
+        | (pd.to_numeric(tabla.get("Dias Atraso OC", 0), errors="coerce").fillna(0) > 0)
+    )
+    df_relevante = tabla[mask_relevante][cols_clave].head(180)
+
+    resumen = f"""
+DATOS ACTUALES DEL PANEL MRP - PLANTA RÍO LOA (E024)
+- Semana activa: {ultima_sem} (Semanas históricas disponibles: {', '.join(semanas[-6:])})
+- Total materiales monitoreados: {total_items}
+- Materiales Criticidad Alta (A): {len(crit_a)}
+- Total en Quiebre de Stock: {len(quiebres)}
+- Total Bajo Punto de Reorden (ROP): {len(bajo_rop)}
+- Materiales sin OC en tránsito: {len(sin_oc)}
+- ALERTA MÁXIMA (Criticidad A + Stock 0 + Sin OC): {len(crit_quiebre_sin_oc)}
+
+DETALLE DE MATERIALES PRIORITARIOS (Criticidad A, Quiebres, Bajo ROP o con OC Atrasada):
+{df_relevante.to_csv(index=False)}
+"""
+    return resumen
+
+
+def pagina_copiloto():
+    st.markdown("### 🤖 Copiloto Analítico MRP · Río Loa (E024)")
+    st.caption("Consulta en lenguaje natural sobre quiebres, órdenes de compra atrasadas, solpeds, criticidad y prioridades de gestión.")
+
+    api_key = _secret("GEMINI_API_KEY")
+    if not api_key:
+        st.error("Falta configurar `GEMINI_API_KEY` en los Secrets de Streamlit Cloud.")
+        return
+
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        st.error("Falta instalar `google-genai` en `requirements.txt`.")
+        return
+
+    if "chat_mrp_historial" not in st.session_state:
+        st.session_state.chat_mrp_historial = []
+
+    col1, col2 = st.columns([4, 1])
+    with col2:
+        if st.button("🗑️ Limpiar chat", use_container_width=True):
+            st.session_state.chat_mrp_historial = []
+            st.rerun()
+
+    # Sugerencias rápidas si el chat está vacío
+    if not st.session_state.chat_mrp_historial:
+        st.markdown("**Preguntas sugeridas:**")
+        ejemplos = [
+            "¿Qué materiales de criticidad Alta están en quiebre sin OC y qué acción recomiendas?",
+            "Resume las OC con mayor atraso y qué materiales afectan.",
+            "¿Qué materiales bajo ROP tienen Solped pendiente sin OC asignada?",
+        ]
+        cols_ej = st.columns(len(ejemplos))
+        for i, ej in enumerate(ejemplos):
+            if cols_ej[i].button(ej, key=f"ej_chat_{i}", use_container_width=True):
+                st.session_state.prompt_rapido = ej
+                st.rerun()
+
+    # Renderizar mensajes anteriores
+    for msg in st.session_state.chat_mrp_historial:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    prompt = st.chat_input("Escribe tu consulta sobre el MRP actual (ej. código de material, proveedor, quiebres)...")
+    if "prompt_rapido" in st.session_state:
+        prompt = st.session_state.pop("prompt_rapido")
+
+    if prompt:
+        st.session_state.chat_mrp_historial.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Analizando planificación MRP..."):
+                try:
+                    contexto_datos = _construir_contexto_mrp()
+                    instruccion_sistema = (
+                        "Eres un ingeniero experto en abastecimiento y planificación MRP de Enaex S.A. (Planta Río Loa - E024). "
+                        "Responde de forma ejecutiva, directa y accionable usando exclusivamente los datos entregados. "
+                        "Cuando cites materiales, incluye siempre su código, descripción breve, stock actual, ROP y estado de Solped/OC. "
+                        "Usa tablas Markdown cuando compares 3 o más materiales. Si un dato no aparece en el contexto, indícalo con claridad.\n\n"
+                        + contexto_datos
+                    )
+
+                    client = genai.Client(api_key=api_key)
+                    # Enviamos los últimos 6 turnos para mantener contexto conversacional ligero
+                    historial_api = []
+                    for m in st.session_state.chat_mrp_historial[-6:]:
+                        rol = "user" if m["role"] == "user" else "model"
+                        historial_api.append(
+                            types.Content(role=rol, parts=[types.Part.from_text(text=m["content"])])
+                        )
+
+                    resp = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=historial_api,
+                        config=types.GenerateContentConfig(
+                            system_instruction=instruccion_sistema,
+                            temperature=0.2,
+                        ),
+                    )
+                    respuesta_txt = resp.text
+                    st.markdown(respuesta_txt)
+                    st.session_state.chat_mrp_historial.append({"role": "assistant", "content": respuesta_txt})
+                except Exception as e:
+                    st.error(f"Error al consultar el Copiloto IA: {e}")
+    
 # ========================================================================
 #  INTERFAZ (páginas y navegación)
 # ========================================================================
