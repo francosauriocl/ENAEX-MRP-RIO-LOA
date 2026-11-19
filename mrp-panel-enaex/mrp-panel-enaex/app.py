@@ -3325,31 +3325,37 @@ def _construir_contexto_mrp() -> str:
         return "No hay datos cargados en el MRP actual."
 
     total_items = len(tabla)
-    crit_a = tabla[tabla.get("Criticidad", "").astype(str).str.upper() == "A"]
-    quiebres = tabla[tabla.get("Condicion Stock", "") == "Quiebre Stock"]
-    bajo_rop = tabla[tabla.get("Condicion Stock", "") == "Bajo ROP"]
-    sin_oc = tabla[~_tiene_valor(tabla.get("OC en Transito", pd.Series("", index=tabla.index)))]
+    crit_serie = tabla["Criticidad"].astype(str).str.upper() if "Criticidad" in tabla.columns else pd.Series("", index=tabla.index)
+    cond_serie = tabla["Condicion Stock"].astype(str) if "Condicion Stock" in tabla.columns else pd.Series("", index=tabla.index)
+    stock_serie = pd.to_numeric(tabla["Stock"], errors="coerce").fillna(0) if "Stock" in tabla.columns else pd.Series(0, index=tabla.index)
+    oc_serie = tabla["OC en Transito"] if "OC en Transito" in tabla.columns else pd.Series("", index=tabla.index)
+    atraso_serie = pd.to_numeric(tabla["Días atraso OC"], errors="coerce").fillna(0) if "Días atraso OC" in tabla.columns else pd.Series(0, index=tabla.index)
+
+    crit_a = tabla[crit_serie == "A"]
+    quiebres = tabla[cond_serie == "Quiebre Stock"]
+    bajo_rop = tabla[cond_serie.isin(["Bajo Stock", "Bajo ROP"])]
+    sin_oc = tabla[~_tiene_valor(oc_serie)]
     crit_quiebre_sin_oc = tabla[
-        (tabla.get("Criticidad", "").astype(str).str.upper() == "A")
-        & ((pd.to_numeric(tabla.get("Stock"), errors="coerce").fillna(0) <= 0) | (tabla.get("Condicion Stock", "") == "Quiebre Stock"))
-        & (~_tiene_valor(tabla.get("OC en Transito", pd.Series("", index=tabla.index))))
+        (crit_serie == "A")
+        & ((stock_serie <= 0) | (cond_serie == "Quiebre Stock"))
+        & (~_tiene_valor(oc_serie))
     ]
 
     cols_clave = [
         c for c in [
             "Material", "Texto breve de material", "Criticidad", "Area",
-            "Stock", "Punto de Reorden", "Stock Seguridad", "Condicion Stock",
+            "Stock", "Punto de Reorden", "Condicion Stock",
             "Estado gestión", "Solped", "OC en Transito", "Proveedor",
-            "Fecha Entrega OC", "Dias Atraso OC", "Dias_TAT", "Observación"
+            "Fecha entrega OC", "Días atraso OC", "TAT Promedio",
+            "Pronostico_Consolidado", "Resultado demanda", "Observación"
         ]
         if c in tabla.columns
     ]
 
-    # Priorizamos materiales críticos, en quiebre, bajo ROP o con OC atrasada para optimizar contexto
     mask_relevante = (
-        (tabla.get("Criticidad", "").astype(str).str.upper() == "A")
-        | (tabla.get("Condicion Stock", "").isin(["Quiebre Stock", "Bajo ROP"]))
-        | (pd.to_numeric(tabla.get("Dias Atraso OC", 0), errors="coerce").fillna(0) > 0)
+        (crit_serie == "A")
+        | (cond_serie.isin(["Quiebre Stock", "Bajo Stock", "Bajo ROP"]))
+        | (atraso_serie > 0)
     )
     df_relevante = tabla[mask_relevante][cols_clave].head(180)
 
@@ -3359,11 +3365,11 @@ DATOS ACTUALES DEL PANEL MRP - PLANTA RÍO LOA (E024)
 - Total materiales monitoreados: {total_items}
 - Materiales Criticidad Alta (A): {len(crit_a)}
 - Total en Quiebre de Stock: {len(quiebres)}
-- Total Bajo Punto de Reorden (ROP): {len(bajo_rop)}
+- Total Bajo Stock / ROP: {len(bajo_rop)}
 - Materiales sin OC en tránsito: {len(sin_oc)}
 - ALERTA MÁXIMA (Criticidad A + Stock 0 + Sin OC): {len(crit_quiebre_sin_oc)}
 
-DETALLE DE MATERIALES PRIORITARIOS (Criticidad A, Quiebres, Bajo ROP o con OC Atrasada):
+DETALLE DE MATERIALES PRIORITARIOS (Criticidad A, Quiebres, Bajo Stock o con OC Atrasada):
 {df_relevante.to_csv(index=False)}
 """
     return resumen
